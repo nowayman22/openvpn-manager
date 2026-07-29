@@ -22,6 +22,15 @@ def discover_profiles(client_dir: str = CLIENT_DIR) -> list[str]:
     return sorted(names)
 
 
+def client_dir_readable(client_dir: str = CLIENT_DIR) -> bool:
+    """True if the current user can list the client dir.
+
+    The dir is 0750 openvpn:network by default; without read+execute access
+    ``discover_profiles`` silently returns [] even when profiles exist.
+    """
+    return os.access(client_dir, os.R_OK | os.X_OK)
+
+
 def connect_argv(profile: str) -> list[str]:
     return ["systemctl", "start", unit_name(profile)]
 

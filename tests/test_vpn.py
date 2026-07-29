@@ -18,6 +18,24 @@ def test_discover_profiles_missing_dir(tmp_path):
     assert vpn.discover_profiles(str(tmp_path / "nope")) == []
 
 
+def test_client_dir_readable_true(tmp_path):
+    assert vpn.client_dir_readable(str(tmp_path)) is True
+
+
+def test_client_dir_readable_missing(tmp_path):
+    assert vpn.client_dir_readable(str(tmp_path / "nope")) is False
+
+
+def test_client_dir_readable_no_permission(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o000)
+    try:
+        assert vpn.client_dir_readable(str(locked)) is False
+    finally:
+        locked.chmod(0o755)  # let pytest clean up
+
+
 def test_connect_argv():
     assert vpn.connect_argv("work") == ["systemctl", "start", "openvpn-client@work"]
 

@@ -1,5 +1,7 @@
 """Main GTK4/libadwaita application window."""
 
+import getpass
+import os
 import subprocess
 
 import gi
@@ -39,6 +41,10 @@ class Window(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
 
+        self._warning = Adw.Banner()
+        self._warning.set_revealed(False)
+        box.append(self._warning)
+
         self._profile_dropdown = Gtk.DropDown.new_from_strings([])
         box.append(self._labeled("Profile", self._profile_dropdown))
 
@@ -57,6 +63,10 @@ class Window(Adw.ApplicationWindow):
         box.append(self._uptime_label)
         self._info_label = Gtk.Label(label="", halign=Gtk.Align.START, wrap=True)
         box.append(self._info_label)
+
+        self._status_line = Gtk.Label(label="", halign=Gtk.Align.START, wrap=True)
+        self._status_line.add_css_class("dim-label")
+        box.append(self._status_line)
 
         self._toast.set_child(box)
         toolbar.set_content(self._toast)
@@ -77,11 +87,27 @@ class Window(Adw.ApplicationWindow):
         return row
 
     def _reload_profiles(self):
+        readable = vpn.client_dir_readable()
+        if not readable:
+            user = getpass.getuser()
+            self._warning.set_title(
+                f"Cannot read {vpn.CLIENT_DIR}. Run ./install.sh, or: "
+                f"sudo setfacl -m u:{user}:rx {vpn.CLIENT_DIR}")
+            self._warning.set_revealed(True)
+        else:
+            self._warning.set_revealed(False)
         self._profiles = vpn.discover_profiles()
         model = Gtk.StringList.new(self._profiles or ["(no profiles)"])
         self._profile_dropdown.set_model(model)
         self._profile_dropdown.set_sensitive(bool(self._profiles))
         self._action_btn.set_sensitive(bool(self._profiles))
+
+    def _set_status(self, text: str, error: bool = False):
+        self._status_line.set_text(text)
+        self._status_line.remove_css_class("error")
+        self._status_line.remove_css_class("success")
+        if text:
+            self._status_line.add_css_class("error" if error else "success")
 
     def _selected_profile(self):
         if not self._profiles:
@@ -96,8 +122,16 @@ class Window(Adw.ApplicationWindow):
         if not profile:
             return
         state = vpn.is_active(profile)
-        argv = vpn.disconnect_argv(profile) if state == "active" else vpn.connect_argv(profile)
-        self._spawn(argv)
+        if state == "active":
+            self._set_status(f"Disconnecting {profile}…")
+            self._spawn(vpn.disconnect_argv(profile),
+                        success_msg=f"Disconnected {profile}",
+                        fail_prefix=f"Failed to disconnect {profile}")
+        else:
+            self._set_status(f"Connecting {profile}…")
+            self._spawn(vpn.connect_argv(profile),
+                        success_msg=f"Connected {profile}",
+                        fail_prefix=f"Failed to connect {profile}")
 
     def _on_import(self, _action, _param):
         dialog = Gtk.FileDialog(title="Import .ovpn profile")
@@ -107,29 +141,47 @@ class Window(Adw.ApplicationWindow):
         try:
             gfile = dialog.open_finish(result)
         except GLib.Error:
-            return
+            return  # user cancelled the file picker
         path = gfile.get_path()
-        if path:
-            self._spawn(vpn.import_argv(path), on_done=self._reload_profiles)
+        if not path:
+            return
+        name = os.path.splitext(os.path.basename(path))[0]
+        self._set_status(f"Importing {name}… (approve the password prompt)")
+        self._spawn(vpn.import_argv(path),
+                    success_msg=f"Imported {name}",
+                    fail_prefix=f"Import of {name} failed",
+                    on_done=self._reload_profiles)
 
-    def _spawn(self, argv, on_done=None):
+    def _spawn(self, argv, success_msg=None, fail_prefix="Command failed", on_done=None):
         try:
             proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDERR_PIPE)
         except GLib.Error as exc:
-            self._toast.add_toast(Adw.Toast.new(str(exc)))
+            self._report(False, fail_prefix, str(exc))
             return
 
         def done(p, res):
             try:
                 _ok, _out, err = p.communicate_utf8_finish(res)
-                if p.get_exit_status() != 0:
-                    self._toast.add_toast(Adw.Toast.new((err or "command failed").strip()))
-                elif on_done:
-                    on_done()
             except GLib.Error as exc:
-                self._toast.add_toast(Adw.Toast.new(str(exc)))
+                self._report(False, fail_prefix, str(exc))
+                return
+            if p.get_exit_status() != 0:
+                self._report(False, fail_prefix, (err or "").strip())
+            else:
+                self._report(True, success_msg or "Done", "")
+                if on_done:
+                    on_done()
 
         proc.communicate_utf8_async(None, None, done)
+
+    def _report(self, ok: bool, message: str, detail: str):
+        if ok:
+            self._set_status(message)
+            self._toast.add_toast(Adw.Toast.new(message))
+        else:
+            full = f"{message}: {detail}" if detail else message
+            self._set_status(full, error=True)
+            self._toast.add_toast(Adw.Toast.new(full))
 
     def _tick(self):
         profile = self._selected_profile()
