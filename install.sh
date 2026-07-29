@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_NAME="$(id -un)"
+APP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/scalable/apps"
+
+echo "Installing OpenVPN Manager from $PROJECT_DIR"
+
+mkdir -p "$APP_DIR" "$ICON_DIR"
+
+install -m644 "$PROJECT_DIR/packaging/openvpn-manager.svg" "$ICON_DIR/openvpn-manager.svg"
+
+sed "s|PROJECT_DIR|$PROJECT_DIR|g" "$PROJECT_DIR/packaging/openvpn-manager.desktop" \
+    > "$APP_DIR/openvpn-manager.desktop"
+
+echo "Installing polkit rule (needs root)..."
+TMP_RULE="$(mktemp)"
+sed "s|PROJECT_USER|$USER_NAME|g" "$PROJECT_DIR/packaging/50-openvpn-manager.rules" > "$TMP_RULE"
+sudo install -m644 "$TMP_RULE" /etc/polkit-1/rules.d/50-openvpn-manager.rules
+rm -f "$TMP_RULE"
+
+update-desktop-database "$APP_DIR" 2>/dev/null || true
+gtk4-update-icon-cache -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+
+echo "Done. Launch 'OpenVPN Manager' from your app menu."

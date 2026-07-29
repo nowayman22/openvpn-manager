@@ -1,0 +1,10 @@
+// Allow the installing user to manage only openvpn-client@ units without a password.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "PROJECT_USER") {
+        var unit = action.lookup("unit");
+        if (unit && unit.indexOf("openvpn-client@") === 0) {
+            return polkit.Result.YES;
+        }
+    }
+});

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OpenVPN Manager
+Comment=Manage OpenVPN profiles with live usage indicator
+Exec=env PYTHONPATH=PROJECT_DIR python3 -m openvpn_manager
+Icon=openvpn-manager
+Terminal=false
+Categories=Network;System;
