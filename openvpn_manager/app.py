@@ -127,11 +127,52 @@ class Window(Adw.ApplicationWindow):
             self._spawn(vpn.disconnect_argv(profile),
                         success_msg=f"Disconnected {profile}",
                         fail_prefix=f"Failed to disconnect {profile}")
+        elif vpn.needs_credentials(f"{vpn.CLIENT_DIR}/{profile}.conf"):
+            self._prompt_credentials(profile)
         else:
-            self._set_status(f"Connecting {profile}…")
-            self._spawn(vpn.connect_argv(profile),
-                        success_msg=f"Connected {profile}",
-                        fail_prefix=f"Failed to connect {profile}")
+            self._connect(profile)
+
+    def _connect(self, profile):
+        self._set_status(f"Connecting {profile}…")
+        self._spawn(vpn.connect_argv(profile),
+                    success_msg=f"Connected {profile}",
+                    fail_prefix=f"Failed to connect {profile}")
+
+    def _prompt_credentials(self, profile):
+        dialog = Adw.MessageDialog.new(
+            self, "Credentials required",
+            f"Profile '{profile}' uses username/password authentication.")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        user_entry = Gtk.Entry(placeholder_text="Username")
+        pass_entry = Gtk.PasswordEntry(show_peek_icon=True)
+        body.append(user_entry)
+        body.append(pass_entry)
+        dialog.set_extra_child(body)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("connect", "Save & Connect")
+        dialog.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("connect")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response):
+            if response == "connect":
+                self._save_creds_and_connect(
+                    profile, user_entry.get_text(), pass_entry.get_text())
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _save_creds_and_connect(self, profile, username, password):
+        if not username or not password:
+            self._report(False, "Credentials required",
+                         "username and password must not be empty")
+            return
+        self._set_status(f"Saving credentials for {profile}…")
+        self._spawn(vpn.setcreds_argv(profile, vpn.helper_path()),
+                    success_msg=f"Credentials saved for {profile}",
+                    fail_prefix=f"Saving credentials for {profile} failed",
+                    stdin_text=f"{username}\n{password}\n",
+                    on_done=lambda: self._connect(profile))
 
     def _on_import(self, _action, _param):
         dialog = Gtk.FileDialog(title="Import .ovpn profile")
@@ -152,9 +193,13 @@ class Window(Adw.ApplicationWindow):
                     fail_prefix=f"Import of {name} failed",
                     on_done=self._reload_profiles)
 
-    def _spawn(self, argv, success_msg=None, fail_prefix="Command failed", on_done=None):
+    def _spawn(self, argv, success_msg=None, fail_prefix="Command failed",
+               on_done=None, stdin_text=None):
+        flags = Gio.SubprocessFlags.STDERR_PIPE
+        if stdin_text is not None:
+            flags |= Gio.SubprocessFlags.STDIN_PIPE
         try:
-            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDERR_PIPE)
+            proc = Gio.Subprocess.new(argv, flags)
         except GLib.Error as exc:
             self._report(False, fail_prefix, str(exc))
             return
@@ -172,7 +217,7 @@ class Window(Adw.ApplicationWindow):
                 if on_done:
                     on_done()
 
-        proc.communicate_utf8_async(None, None, done)
+        proc.communicate_utf8_async(stdin_text, None, done)
 
     def _report(self, ok: bool, message: str, detail: str):
         if ok:

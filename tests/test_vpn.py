@@ -76,3 +76,37 @@ def test_parse_remote(tmp_path):
 
 def test_parse_remote_missing(tmp_path):
     assert vpn.parse_remote(str(tmp_path / "nope.conf")) == (None, None)
+
+
+def test_needs_credentials_bare_directive(tmp_path):
+    conf = tmp_path / "work.conf"
+    conf.write_text("client\nremote host 1194\nauth-user-pass\n")
+    assert vpn.needs_credentials(str(conf)) is True
+
+
+def test_needs_credentials_with_file(tmp_path):
+    conf = tmp_path / "work.conf"
+    conf.write_text("client\nauth-user-pass /etc/openvpn/client/work.creds\n")
+    assert vpn.needs_credentials(str(conf)) is False
+
+
+def test_needs_credentials_absent(tmp_path):
+    conf = tmp_path / "work.conf"
+    conf.write_text("client\nremote host 1194\n")
+    assert vpn.needs_credentials(str(conf)) is False
+
+
+def test_needs_credentials_missing_file(tmp_path):
+    assert vpn.needs_credentials(str(tmp_path / "nope.conf")) is False
+
+
+def test_setcreds_argv():
+    argv = vpn.setcreds_argv("work", "/opt/app/helper.sh")
+    assert argv == ["pkexec", "/opt/app/helper.sh", "set-creds", "work"]
+
+
+def test_helper_path_points_at_shipped_script():
+    path = vpn.helper_path()
+    assert path.endswith("openvpn_manager/helper.sh")
+    import os
+    assert os.path.isfile(path)

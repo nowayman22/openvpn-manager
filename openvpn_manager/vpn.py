@@ -59,6 +59,33 @@ def unit_property(profile: str, prop: str, runner=run) -> str:
     return (cp.stdout or "").strip()
 
 
+def needs_credentials(conf_path: str) -> bool:
+    """True if the profile has a bare ``auth-user-pass`` directive.
+
+    A bare directive (no file argument) makes OpenVPN block on an interactive
+    username/password prompt that never reaches the GUI. If it already points
+    at a credentials file, no prompt is needed.
+    """
+    try:
+        with open(conf_path) as f:
+            for line in f:
+                parts = line.split()
+                if parts and parts[0] == "auth-user-pass":
+                    return len(parts) < 2
+    except OSError:
+        return False
+    return False
+
+
+def helper_path() -> str:
+    """Absolute path to the privileged helper script shipped in the package."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "helper.sh")
+
+
+def setcreds_argv(profile: str, helper: str) -> list[str]:
+    return ["pkexec", helper, "set-creds", profile]
+
+
 def parse_remote(conf_path: str) -> tuple[str | None, str | None]:
     remote = None
     proto = None

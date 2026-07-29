@@ -10,6 +10,9 @@ echo "Installing OpenVPN Manager from $PROJECT_DIR"
 
 mkdir -p "$APP_DIR" "$ICON_DIR"
 
+# The privileged helper (invoked via pkexec) must be executable.
+chmod +x "$PROJECT_DIR/openvpn_manager/helper.sh"
+
 install -m644 "$PROJECT_DIR/packaging/openvpn-manager.svg" "$ICON_DIR/openvpn-manager.svg"
 
 sed "s|PROJECT_DIR|$PROJECT_DIR|g" "$PROJECT_DIR/packaging/openvpn-manager.desktop" \
