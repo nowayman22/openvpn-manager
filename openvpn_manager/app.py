@@ -8,10 +8,12 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("Gdk", "4.0")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import vpn
 from .format import human_bytes, human_duration, human_speed
+from .palette import load_palette, palette_to_css, sparkline_colors
 from .sparkline import Sparkline
 from .stats import Sampler, detect_iface
 
@@ -24,6 +26,11 @@ class Window(Adw.ApplicationWindow):
         self.set_default_size(460, 640)
         self._sampler = None
         self._iface = None
+        self._palette = load_palette()
+        self._spark_colors = (
+            sparkline_colors(self._palette) if self._palette else (None, None))
+        if self._palette is not None:
+            self._apply_theme_css(self._palette)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
@@ -92,7 +99,8 @@ class Window(Adw.ApplicationWindow):
         speed_grid.attach(down_box, 1, 0, 1, 1)
         usage_group.add(speed_grid)
 
-        self._spark = Sparkline()
+        self._spark = Sparkline(
+            down_color=self._spark_colors[0], up_color=self._spark_colors[1])
         usage_group.add(self._spark)
 
         self._session_row = Adw.ActionRow(title="Session")
@@ -143,6 +151,17 @@ class Window(Adw.ApplicationWindow):
         label.add_css_class("caption")
         label.add_css_class("dim-label")
         return label
+
+    @staticmethod
+    def _apply_theme_css(palette):
+        try:
+            provider = Gtk.CssProvider()
+            provider.load_from_string(palette_to_css(palette))
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except GLib.Error:
+            pass  # keep system defaults if the CSS fails to load
 
     def _reload_profiles(self):
         readable = vpn.client_dir_readable()
