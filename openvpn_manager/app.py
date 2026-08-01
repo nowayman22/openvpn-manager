@@ -21,7 +21,7 @@ APP_ID = "dev.nikits.OpenVpnManager"
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="OpenVPN Manager")
-        self.set_default_size(420, 560)
+        self.set_default_size(460, 640)
         self._sampler = None
         self._iface = None
 
@@ -45,28 +45,86 @@ class Window(Adw.ApplicationWindow):
         self._warning.set_revealed(False)
         box.append(self._warning)
 
-        self._profile_dropdown = Gtk.DropDown.new_from_strings([])
-        box.append(self._labeled("Profile", self._profile_dropdown))
+        self._empty_page = Adw.StatusPage()
+        self._empty_page.set_title("No profiles imported")
+        self._empty_page.set_description(
+            "Import an .ovpn file to start using your VPN.")
+        self._empty_page.set_icon_name("network-vpn-symbolic")
+        empty_btn = Gtk.Button(label="Browse for .ovpn…")
+        empty_btn.add_css_class("suggested-action")
+        empty_btn.connect("clicked", self._on_import_clicked)
+        self._empty_page.set_child(empty_btn)
+        box.append(self._empty_page)
+
+        self._cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+
+        conn_group = Adw.PreferencesGroup()
+        conn_group.set_title("Connection")
+        self._profile_combo = Adw.ComboRow()
+        self._profile_combo.set_title("Profile")
+        self._profile_combo.set_subtitle("Select an OpenVPN profile")
+        conn_group.add(self._profile_combo)
+        self._cards_box.append(conn_group)
 
         self._action_btn = Gtk.Button(label="Connect")
+        self._action_btn.set_hexpand(True)
         self._action_btn.add_css_class("suggested-action")
         self._action_btn.connect("clicked", self._on_action)
-        box.append(self._action_btn)
+        self._cards_box.append(self._action_btn)
 
-        self._speed_label = Gtk.Label(label="↑ 0 B/s    ↓ 0 B/s")
-        box.append(self._speed_label)
+        usage_group = Adw.PreferencesGroup()
+        usage_group.set_title("Usage")
+
+        speed_grid = Gtk.Grid()
+        speed_grid.set_column_homogeneous(True)
+        speed_grid.set_column_spacing(12)
+        up_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        up_box.append(self._speed_header("UP"))
+        self._up_label = Gtk.Label(label="0 B/s", halign=Gtk.Align.CENTER)
+        self._up_label.add_css_class("title-1")
+        up_box.append(self._up_label)
+        down_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        down_box.append(self._speed_header("DOWN"))
+        self._down_label = Gtk.Label(label="0 B/s", halign=Gtk.Align.CENTER)
+        self._down_label.add_css_class("title-1")
+        down_box.append(self._down_label)
+        speed_grid.attach(up_box, 0, 0, 1, 1)
+        speed_grid.attach(down_box, 1, 0, 1, 1)
+        usage_group.add(speed_grid)
+
         self._spark = Sparkline()
-        box.append(self._spark)
-        self._data_label = Gtk.Label(label="Session: ↑ 0 B  ↓ 0 B", halign=Gtk.Align.START)
-        box.append(self._data_label)
-        self._uptime_label = Gtk.Label(label="Uptime: 00:00:00", halign=Gtk.Align.START)
-        box.append(self._uptime_label)
-        self._info_label = Gtk.Label(label="", halign=Gtk.Align.START, wrap=True)
-        box.append(self._info_label)
+        usage_group.add(self._spark)
+
+        self._session_row = Adw.ActionRow(title="Session")
+        self._session_row.set_subtitle("↑ 0 B  ↓ 0 B")
+        usage_group.add(self._session_row)
+
+        self._uptime_row = Adw.ActionRow(title="Uptime")
+        self._uptime_row.set_subtitle("00:00:00")
+        usage_group.add(self._uptime_row)
+
+        self._ip_row = Adw.ActionRow(title="VPN IP")
+        self._ip_row.set_subtitle("—")
+        usage_group.add(self._ip_row)
+
+        self._remote_row = Adw.ActionRow(title="Remote")
+        self._remote_row.set_subtitle("—")
+        usage_group.add(self._remote_row)
+
+        self._proto_row = Adw.ActionRow(title="Protocol")
+        self._proto_row.set_subtitle("—")
+        usage_group.add(self._proto_row)
+
+        self._cards_box.append(usage_group)
 
         self._status_line = Gtk.Label(label="", halign=Gtk.Align.START, wrap=True)
         self._status_line.add_css_class("dim-label")
-        box.append(self._status_line)
+        self._cards_box.append(self._status_line)
+
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(460)
+        clamp.set_child(self._cards_box)
+        box.append(clamp)
 
         self._toast.set_child(box)
         toolbar.set_content(self._toast)
@@ -79,12 +137,12 @@ class Window(Adw.ApplicationWindow):
         self._reload_profiles()
         GLib.timeout_add(1000, self._tick)
 
-    def _labeled(self, text, widget):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        row.append(Gtk.Label(label=text))
-        widget.set_hexpand(True)
-        row.append(widget)
-        return row
+    @staticmethod
+    def _speed_header(text):
+        label = Gtk.Label(label=text, halign=Gtk.Align.CENTER)
+        label.add_css_class("caption")
+        label.add_css_class("dim-label")
+        return label
 
     def _reload_profiles(self):
         readable = vpn.client_dir_readable()
@@ -97,10 +155,18 @@ class Window(Adw.ApplicationWindow):
         else:
             self._warning.set_revealed(False)
         self._profiles = vpn.discover_profiles()
-        model = Gtk.StringList.new(self._profiles or ["(no profiles)"])
-        self._profile_dropdown.set_model(model)
-        self._profile_dropdown.set_sensitive(bool(self._profiles))
-        self._action_btn.set_sensitive(bool(self._profiles))
+        self._profile_combo.set_model(Gtk.StringList.new(self._profiles))
+        if self._profiles:
+            self._profile_combo.set_selected(0)
+            self._profile_combo.set_sensitive(True)
+            self._action_btn.set_sensitive(True)
+            self._cards_box.set_visible(True)
+            self._empty_page.set_visible(False)
+        else:
+            self._profile_combo.set_sensitive(False)
+            self._action_btn.set_sensitive(False)
+            self._cards_box.set_visible(False)
+            self._empty_page.set_visible(True)
 
     def _set_status(self, text: str, error: bool = False):
         self._status_line.set_text(text)
@@ -112,7 +178,7 @@ class Window(Adw.ApplicationWindow):
     def _selected_profile(self):
         if not self._profiles:
             return None
-        idx = self._profile_dropdown.get_selected()
+        idx = self._profile_combo.get_selected()
         if idx < 0 or idx >= len(self._profiles):
             return None
         return self._profiles[idx]
@@ -127,6 +193,8 @@ class Window(Adw.ApplicationWindow):
             self._spawn(vpn.disconnect_argv(profile),
                         success_msg=f"Disconnected {profile}",
                         fail_prefix=f"Failed to disconnect {profile}")
+        elif state == "activating":
+            return  # button is disabled while connecting; stay defensive
         elif vpn.needs_credentials(f"{vpn.CLIENT_DIR}/{profile}.conf"):
             self._prompt_credentials(profile)
         else:
@@ -175,6 +243,12 @@ class Window(Adw.ApplicationWindow):
                     on_done=lambda: self._connect(profile))
 
     def _on_import(self, _action, _param):
+        self._open_import()
+
+    def _on_import_clicked(self, _btn):
+        self._open_import()
+
+    def _open_import(self):
         dialog = Gtk.FileDialog(title="Import .ovpn profile")
         dialog.open(self, None, self._on_import_chosen)
 
@@ -228,21 +302,35 @@ class Window(Adw.ApplicationWindow):
             self._set_status(full, error=True)
             self._toast.add_toast(Adw.Toast.new(full))
 
+    def _set_status_pill(self, text, connected):
+        self._status_pill.set_text(text)
+        self._status_pill.remove_css_class("success")
+        self._status_pill.remove_css_class("dim-label")
+        self._status_pill.add_css_class("success" if connected else "dim-label")
+
+    def _set_action_button(self, label, style, sensitive):
+        self._action_btn.set_label(label)
+        self._action_btn.set_sensitive(sensitive)
+        self._action_btn.remove_css_class("suggested-action")
+        self._action_btn.remove_css_class("destructive-action")
+        if style:
+            self._action_btn.add_css_class(style)
+
     def _tick(self):
         profile = self._selected_profile()
         if not profile:
             return True
         state = vpn.is_active(profile)
         if state == "active":
-            self._status_pill.set_text("Connected")
-            self._action_btn.set_label("Disconnect")
+            self._set_status_pill("Connected", True)
+            self._set_action_button("Disconnect", "destructive-action", True)
             self._update_usage(profile)
         elif state == "activating":
-            self._status_pill.set_text("Connecting")
-            self._action_btn.set_label("Cancel")
+            self._set_status_pill("Connecting", False)
+            self._set_action_button("Connecting…", None, False)
         else:
-            self._status_pill.set_text("Disconnected")
-            self._action_btn.set_label("Connect")
+            self._set_status_pill("Disconnected", False)
+            self._set_action_button("Connect", "suggested-action", True)
             self._sampler = None
             self._iface = None
         return True
@@ -258,13 +346,20 @@ class Window(Adw.ApplicationWindow):
             s = self._sampler.sample()
         except OSError:
             return
-        self._speed_label.set_text(
-            f"↑ {human_speed(s['up_bps'])}    ↓ {human_speed(s['down_bps'])}")
+        self._up_label.set_text(human_speed(s["up_bps"]))
+        self._down_label.set_text(human_speed(s["down_bps"]))
         self._spark.push(s["up_bps"], s["down_bps"])
-        self._data_label.set_text(
-            f"Session: ↑ {human_bytes(s['total_tx'])}  ↓ {human_bytes(s['total_rx'])}")
-        self._uptime_label.set_text("Uptime: " + self._uptime(profile))
-        self._info_label.set_text(self._info(profile, iface))
+        self._session_row.set_subtitle(
+            f"↑ {human_bytes(s['total_tx'])}  ↓ {human_bytes(s['total_rx'])}")
+        self._uptime_row.set_subtitle(self._uptime(profile))
+        self._set_info_rows(iface, profile)
+
+    def _set_info_rows(self, iface, profile):
+        ip = self._iface_ip(iface)
+        remote, proto = vpn.parse_remote(f"{vpn.CLIENT_DIR}/{profile}.conf")
+        self._ip_row.set_subtitle(ip or "—")
+        self._remote_row.set_subtitle(remote or "—")
+        self._proto_row.set_subtitle((proto or "—").upper())
 
     def _uptime(self, profile):
         mono = vpn.unit_property(profile, "ActiveEnterTimestampMonotonic")
@@ -274,18 +369,6 @@ class Window(Adw.ApplicationWindow):
             return "00:00:00"
         now_us = GLib.get_monotonic_time()
         return human_duration(max(0, (now_us - started_us) // 1_000_000))
-
-    def _info(self, profile, iface):
-        remote, proto = vpn.parse_remote(f"{vpn.CLIENT_DIR}/{profile}.conf")
-        ip = self._iface_ip(iface)
-        bits = []
-        if ip:
-            bits.append(f"IP {ip}")
-        if remote:
-            bits.append(f"remote {remote}")
-        if proto:
-            bits.append(f"proto {proto}")
-        return "   ".join(bits)
 
     def _iface_ip(self, iface):
         try:
