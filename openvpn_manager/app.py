@@ -11,6 +11,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
+from . import palette
 from . import vpn
 from .format import human_bytes, human_duration, human_speed
 from .palette import load_palette, palette_to_css, sparkline_colors
@@ -26,6 +27,9 @@ class Window(Adw.ApplicationWindow):
         self.set_default_size(460, 640)
         self._sampler = None
         self._iface = None
+        self._provider = Gtk.CssProvider()
+        self._reload_pending = False
+        self._reload_retries = 5
         self._palette = load_palette()
         self._spark_colors = (
             sparkline_colors(self._palette) if self._palette else (None, None))
@@ -144,6 +148,7 @@ class Window(Adw.ApplicationWindow):
 
         self._reload_profiles()
         GLib.timeout_add(1000, self._tick)
+        self._start_theme_monitor()
 
     @staticmethod
     def _speed_header(text):
@@ -152,16 +157,42 @@ class Window(Adw.ApplicationWindow):
         label.add_css_class("dim-label")
         return label
 
-    @staticmethod
-    def _apply_theme_css(palette):
+    def _apply_theme_css(self, pal):
         try:
-            provider = Gtk.CssProvider()
-            provider.load_from_string(palette_to_css(palette))
+            self._provider.load_from_string(palette_to_css(pal))
             Gtk.StyleContext.add_provider_for_display(
-                Gdk.Display.get_default(), provider,
+                Gdk.Display.get_default(), self._provider,
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         except GLib.Error:
-            pass  # keep system defaults if the CSS fails to load
+            pass  # keep the last good colors if the CSS fails to load
+
+    def _start_theme_monitor(self):
+        try:
+            monitor = Gio.File.new_for_path(str(palette.THEME_DIR))
+            self._monitor = monitor.monitor_directory(
+                Gio.FileMonitorFlags.NONE, None)
+        except GLib.Error:
+            return
+        self._monitor.connect("changed", self._on_theme_changed)
+
+    def _on_theme_changed(self, *_args):
+        if self._reload_pending:
+            return
+        self._reload_pending = True
+        GLib.timeout_add(200, self._reload_theme)
+
+    def _reload_theme(self):
+        self._reload_pending = False
+        pal = load_palette()
+        if pal is None:
+            if self._reload_retries > 0:
+                self._reload_retries -= 1
+                return True  # file may be mid-swap; retry briefly
+            return False  # give up, keep the last good colors
+        self._reload_retries = 5
+        self._apply_theme_css(pal)
+        self._spark.set_colors(*sparkline_colors(pal))
+        return False
 
     def _reload_profiles(self):
         readable = vpn.client_dir_readable()

@@ -26,6 +26,11 @@ class Sparkline(Gtk.DrawingArea):
         self._down.append(max(0.0, down_bps))
         self.queue_draw()
 
+    def set_colors(self, down_color, up_color):
+        self._down_color = down_color or self._down_color
+        self._up_color = up_color or self._up_color
+        self.queue_draw()
+
     def _draw(self, area, cr, width, height):
         cr.set_source_rgba(0, 0, 0, 0)
         cr.paint()

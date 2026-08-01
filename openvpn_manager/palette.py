@@ -3,7 +3,8 @@
 import tomllib
 from pathlib import Path
 
-CURRENT_THEME_PATH = Path.home() / ".config" / "omarchy" / "current" / "theme" / "colors.toml"
+THEME_DIR = Path.home() / ".config" / "omarchy" / "current"
+CURRENT_THEME_PATH = THEME_DIR / "theme" / "colors.toml"
 
 
 def hex_to_rgba(value):
