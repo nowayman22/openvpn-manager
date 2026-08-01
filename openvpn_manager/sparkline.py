@@ -11,12 +11,14 @@ MAX_SAMPLES = 60
 
 
 class Sparkline(Gtk.DrawingArea):
-    def __init__(self):
+    def __init__(self, down_color=None, up_color=None):
         super().__init__()
         self.set_content_height(120)
         self.set_hexpand(True)
         self._down = collections.deque(maxlen=MAX_SAMPLES)
         self._up = collections.deque(maxlen=MAX_SAMPLES)
+        self._down_color = down_color or (0.20, 0.60, 0.86)
+        self._up_color = up_color or (0.90, 0.49, 0.13)
         self.set_draw_func(self._draw)
 
     def push(self, up_bps: float, down_bps: float) -> None:
@@ -28,8 +30,8 @@ class Sparkline(Gtk.DrawingArea):
         cr.set_source_rgba(0, 0, 0, 0)
         cr.paint()
         peak = max([1.0, *self._up, *self._down])
-        self._draw_series(cr, self._down, width, height, peak, (0.20, 0.60, 0.86))
-        self._draw_series(cr, self._up, width, height, peak, (0.90, 0.49, 0.13))
+        self._draw_series(cr, self._down, width, height, peak, self._down_color)
+        self._draw_series(cr, self._up, width, height, peak, self._up_color)
 
     def _draw_series(self, cr, series, width, height, peak, rgb):
         if len(series) < 2:
