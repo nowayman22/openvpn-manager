@@ -30,6 +30,15 @@ def read_counters(iface: str, sys_net_dir: str = "/sys/class/net") -> tuple[int,
 
 
 class Sampler:
+    """Sample a network interface's byte counters.
+
+    The baseline (and therefore cumulative session totals) is captured on the
+    first :meth:`sample` call, i.e. when the app starts watching the interface.
+    Counters are raw kernel totals for the interface, so session totals count
+    all tunnel traffic since that moment -- not since the VPN connected, and
+    not just one application's traffic. See docs/usage-tracking.md.
+    """
+
     def __init__(self, iface: str, reader=read_counters, clock=time.monotonic):
         self._iface = iface
         self._reader = reader
