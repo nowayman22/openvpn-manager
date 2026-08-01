@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the OpenVPN Manager UI use the active Omarchy theme's color palette by reading `colors.toml` at launch and mapping it onto libadwaita named colors plus the sparkline.
+**Goal:** Make the OpenVPN Manager UI use the active Omarchy theme's color palette — reading `colors.toml` at launch, mapping it onto libadwaita named colors plus the sparkline, and live-updating when the theme changes.
 
-**Architecture:** A new pure module `openvpn_manager/palette.py` parses the active theme's `colors.toml` (`~/.config/omarchy/current/theme/colors.toml` — guaranteed present by `omarchy theme set`) into RGB float tuples, renders a GTK CSS string that overrides libadwaita's `accent`/`success`/`warning`/`error`/`destructive` named colors, and returns the two sparkline line colors. `app.py` loads the CSS via a `Gtk.CssProvider` at `STYLE_PROVIDER_PRIORITY_APPLICATION` and passes the line colors into `Sparkline`. Any failure to read the palette falls back to the app's current colors.
+**Architecture:** A pure module `openvpn_manager/palette.py` parses the active theme's `colors.toml` (`~/.config/omarchy/current/theme/colors.toml` — guaranteed present by `omarchy theme set`) into RGB float tuples, renders a GTK CSS string that overrides libadwaita's `accent`/`success`/`warning`/`error`/`destructive` named colors, and returns the two sparkline line colors. `app.py` loads the CSS via a `Gtk.CssProvider` at `STYLE_PROVIDER_PRIORITY_APPLICATION` and passes the line colors into `Sparkline`. A `Gio.FileMonitor` on `~/.config/omarchy/current/` (the directory that survives `omarchy theme set`'s `rm -rf` + `mv` swap) debounce-reloads the palette and re-applies it live. Any failure to read the palette keeps the last good colors.
 
 **Tech Stack:** Python 3.11+ (`tomllib` stdlib), GTK4 / libadwaita 1.9.2, pytest via `.venv/bin/python -m pytest`.
 
@@ -13,10 +13,10 @@
 - `requires-python = ">=3.11"` — use stdlib `tomllib`, add no dependencies.
 - The app only **reads** `~/.config/omarchy/current/theme/colors.toml`. Never modify anything under `~/.local/share/omarchy/` or `~/.config/omarchy/`.
 - Respect the system GTK color-scheme preference. Do not force dark/light mode; only swap semantic colors.
-- Palette is read once at launch. No live reload on theme change.
+- Live-follow: monitor `~/.config/omarchy/current/` and re-apply the palette when the theme changes; keep the last good palette on any failure.
 - Graceful fallback: missing/unreadable/malformed palette → current default colors, no crash.
 - Semantic mapping is fixed per the stable `colors.toml` schema: `accent`→accent, `color1`→error/destructive, `color2`→success, `color3`→warning, `selection_background`→sparkline up line.
-- Tests run with `.venv/bin/python -m pytest -q` (currently 34 passing). GTK widgets are verified manually (existing project convention); the palette module is unit-tested.
+- Tests run with `.venv/bin/python -m pytest -q` (currently 42 passing). GTK widgets are verified manually (existing project convention); the palette module is unit-tested.
 
 ---
 
@@ -394,4 +394,132 @@ Sanity check the fallback: temporarily rename `~/.config/omarchy/current/theme/c
 ```bash
 git add openvpn_manager/app.py
 git commit -m "feat: theme the app window with the active Omarchy palette"
+```
+
+---
+
+### Task 4: Live palette switching
+
+**Files:**
+- Modify: `openvpn_manager/palette.py:9-11` (add `THEME_DIR`)
+- Modify: `openvpn_manager/sparkline.py:22` (add `set_colors`)
+- Modify: `openvpn_manager/app.py` (monitor + reload wiring)
+
+**Interfaces:**
+- Consumes: `load_palette`, `palette_to_css`, `sparkline_colors` from `Task 1`; `Sparkline` from `Task 2`.
+- Produces: `palette.THEME_DIR` (path to `~/.config/omarchy/current`); `Sparkline.set_colors(down_color, up_color)`.
+
+`omarchy theme set` replaces `~/.config/omarchy/current/theme/` wholesale (`rm -rf` + `mv`), so neither the file nor the `theme` directory can be watched — the monitor must sit on `~/.config/omarchy/current/`, which survives the swap.
+
+- [ ] **Step 1: Add `THEME_DIR` to the palette module**
+
+In `openvpn_manager/palette.py`, replace the two path constants:
+
+```python
+THEME_DIR = Path.home() / ".config" / "omarchy" / "current"
+CURRENT_THEME_PATH = THEME_DIR / "theme" / "colors.toml"
+```
+
+- [ ] **Step 2: Add `set_colors` to the sparkline**
+
+In `openvpn_manager/sparkline.py`, after `push`, add:
+
+```python
+    def set_colors(self, down_color, up_color):
+        self._down_color = down_color or self._down_color
+        self._up_color = up_color or self._up_color
+        self.queue_draw()
+```
+
+- [ ] **Step 3: Hold a reusable provider and track reload state in `app.py`**
+
+In `Window.__init__`, replace the palette block added in Task 3 (after `self._iface = None`) with:
+
+```python
+        self._sampler = None
+        self._iface = None
+        self._provider = Gtk.CssProvider()
+        self._reload_pending = False
+        self._reload_retries = 5
+        self._palette = load_palette()
+        self._spark_colors = (
+            sparkline_colors(self._palette) if self._palette else (None, None))
+        if self._palette is not None:
+            self._apply_theme_css(self._palette)
+```
+
+- [ ] **Step 4: Convert `_apply_theme_css` to an instance method that reuses the provider**
+
+Replace the Task 3 `_apply_theme_css` method (currently `@staticmethod`) with:
+
+```python
+    def _apply_theme_css(self, palette):
+        try:
+            self._provider.load_from_string(palette_to_css(palette))
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), self._provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except GLib.Error:
+            pass  # keep the last good colors if the CSS fails to load
+```
+
+- [ ] **Step 5: Add the monitor and reload handlers**
+
+In `Window`, after `_apply_theme_css`, add:
+
+```python
+    def _start_theme_monitor(self):
+        try:
+            monitor = Gio.File.new_for_path(str(palette.THEME_DIR))
+            self._monitor = monitor.monitor_directory(
+                Gio.FileMonitorFlags.NONE, None)
+        except GLib.Error:
+            return
+        self._monitor.connect("changed", self._on_theme_changed)
+
+    def _on_theme_changed(self, *_args):
+        if self._reload_pending:
+            return
+        self._reload_pending = True
+        GLib.timeout_add(200, self._reload_theme)
+
+    def _reload_theme(self):
+        self._reload_pending = False
+        palette = load_palette()
+        if palette is None:
+            if self._reload_retries > 0:
+                self._reload_retries -= 1
+                return True  # file may be mid-swap; retry briefly
+            return False  # give up, keep the last good colors
+        self._reload_retries = 5
+        self._apply_theme_css(palette)
+        self._spark.set_colors(*sparkline_colors(palette))
+        return False
+```
+
+- [ ] **Step 6: Start the monitor at the end of `__init__`**
+
+In `Window.__init__`, after `GLib.timeout_add(1000, self._tick)`, add:
+
+```python
+        self._start_theme_monitor()
+```
+
+- [ ] **Step 7: Verify imports and the suite**
+
+Run: `/usr/bin/python3 -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); gi.require_version('Gdk','4.0'); from openvpn_manager.app import Window; print('ok')"`
+Expected: `ok`
+
+Run: `.venv/bin/python -m pytest -q`
+Expected: `42 passed`
+
+- [ ] **Step 8: Manual verification — live theme switch**
+
+With the app already running (from Task 3 Step 6), run `omarchy theme set "Tokyo Night"` in a terminal. Expected within ~1 s: accent/success/error colors and the sparkline re-colour to Tokyo Night's palette, no restart needed. Then run `omarchy theme set Gruvbox` and confirm it switches back.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add openvpn_manager/palette.py openvpn_manager/sparkline.py openvpn_manager/app.py
+git commit -m "feat: live-follow Omarchy theme palette changes"
 ```
