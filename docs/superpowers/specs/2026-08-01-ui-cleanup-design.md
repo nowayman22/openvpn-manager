@@ -15,7 +15,10 @@ or tests.
 
 - Structured card layout: a connection card and a usage card on a `Adw.Clamp`.
 - Idiomatic libadwaita widgets: `Adw.ComboRow` for profile selection, `Adw.ActionRow`
-  for connection info, `Adw.StatusPage` empty state, `Adw.CardGroup` cards.
+  for connection info, `Adw.StatusPage` empty state, `Adw.PreferencesGroup` cards
+  (note: `Adw.Card`/`Adw.CardGroup` are absent from this system's libadwaita 1.9.2
+  typelib; `PreferencesGroup` provides the same card look and is the canonical
+  container for the rows used here).
 - Usage card always visible (zeroed when idle), not hidden on disconnect.
 - Fix two small UI inconsistencies discovered during the refactor.
 
@@ -36,7 +39,7 @@ or tests.
   menu (Import .ovpn). The pill additionally gets the `success` style class
   when connected so state reads at a glance.
 
-### Card 1 — Connection (`Adw.CardGroup`)
+### Card 1 — Connection (`Adw.PreferencesGroup`)
 
 - `Adw.ComboRow` "Profile" listing discovered profiles (replaces the current
   labeled dropdown in a `Gtk.Box`).
@@ -46,7 +49,7 @@ or tests.
   - activating → disabled, label "Connecting…" (fixes the misleading
     "Cancel" label that actually re-triggered connect on click).
 
-### Card 2 — Usage (`Adw.CardGroup`, always visible)
+### Card 2 — Usage (`Adw.PreferencesGroup`, always visible)
 
 - Two prominent current-speed values, Up and Down (`human_speed`), shown
   zeroed when idle.
