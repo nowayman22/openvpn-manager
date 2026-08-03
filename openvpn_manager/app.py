@@ -2,7 +2,9 @@
 
 import getpass
 import os
+import socket
 import subprocess
+import time
 
 import gi
 
@@ -12,11 +14,13 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import palette
+from . import topology
 from . import vpn
 from .format import human_bytes, human_duration, human_speed
 from .palette import load_palette, palette_to_css, sparkline_colors
 from .sparkline import Sparkline
 from .stats import Sampler, detect_iface
+from .topology_view import TopologyView
 
 APP_ID = "dev.nikits.OpenVpnManager"
 
@@ -27,6 +31,9 @@ class Window(Adw.ApplicationWindow):
         self.set_default_size(460, 640)
         self._sampler = None
         self._iface = None
+        self._topology_sweeping = False
+        self._topology_last_sweep = None
+        self._cidr = None
         self._provider = Gtk.CssProvider()
         self._reload_pending = False
         self._reload_retries = 5
@@ -138,9 +145,23 @@ class Window(Adw.ApplicationWindow):
         clamp.set_child(self._cards_box)
         box.append(clamp)
 
-        self._toast.set_child(box)
+        self._stack = Adw.ViewStack()
+        self._stack.add_titled(box, "status", "Status")
+
+        self._topo_view = TopologyView(on_scan=self._on_scan_requested)
+        topo_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                            margin_top=12, margin_bottom=12,
+                            margin_start=12, margin_end=12)
+        topo_page.append(self._topo_view)
+        self._stack.add_titled(topo_page, "topology", "Topology")
+
+        self._toast.set_child(self._stack)
         toolbar.set_content(self._toast)
         self.set_content(toolbar)
+
+        switcher = Adw.ViewSwitcher()
+        switcher.set_stack(self._stack)
+        header.set_title_widget(switcher)
 
         import_action = Gio.SimpleAction.new("import", None)
         import_action.connect("activate", self._on_import)
@@ -383,6 +404,7 @@ class Window(Adw.ApplicationWindow):
             self._set_action_button("Connect", "suggested-action", True)
             self._sampler = None
             self._iface = None
+        self._maybe_refresh_topology()
         return True
 
     def _update_usage(self, profile):
@@ -430,6 +452,80 @@ class Window(Adw.ApplicationWindow):
         except (OSError, ValueError, IndexError):
             return None
         return None
+
+    def _maybe_refresh_topology(self):
+        if self._stack.get_visible_child_name() != "topology":
+            return
+        self._refresh_topology()
+        now = time.monotonic()
+        if (not self._topology_sweeping and
+                (self._topology_last_sweep is None or
+                 now - self._topology_last_sweep >= 60)):
+            self._on_scan_requested()
+
+    def _on_scan_requested(self):
+        if self._topology_sweeping or self._cidr is None:
+            return
+        self._topology_sweeping = True
+        self._spawn_quiet(topology.sweep_argv(self._cidr),
+                          on_done=self._on_sweep_done)
+
+    def _on_sweep_done(self):
+        self._topology_sweeping = False
+        self._topology_last_sweep = time.monotonic()
+        self._refresh_topology()
+
+    def _spawn_quiet(self, argv, on_done=None):
+        try:
+            proc = Gio.Subprocess.new(
+                argv, Gio.SubprocessFlags.STDOUT_DEVNULL |
+                Gio.SubprocessFlags.STDERR_DEVNULL)
+        except GLib.Error:
+            if on_done:
+                on_done()
+            return
+
+        def done(p, res):
+            try:
+                p.wait_finish(res)
+            except GLib.Error:
+                pass
+            if on_done:
+                on_done()
+
+        proc.wait_async(None, done)
+
+    def _refresh_topology(self):
+        route_text = self._read_proc("/proc/net/route")
+        gateway, cidr = topology.gateway_and_subnet(route_text)
+        self._cidr = cidr
+        addr_text = self._run_ip("ip", "-o", "-4", "addr", "show")
+        own = topology.local_ips(addr_text)
+        arp_text = self._read_proc("/proc/net/arp")
+        ndisc_text = self._run_ip("ip", "-6", "neigh", "show")
+        devices = topology.neighbors(arp_text, ndisc_text, own_ips=own)
+        lan = topology.build_segment(gateway, cidr, devices)
+        tunnels = topology.connected_tunnels(
+            self._profiles, topology.tun_ips(addr_text))
+        hostname = socket.gethostname() or "This machine"
+        self._topo_view.set_topology(
+            topology.build_topology(hostname, own, lan, tunnels))
+
+    @staticmethod
+    def _read_proc(path):
+        try:
+            with open(path) as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _run_ip(*argv):
+        try:
+            cp = subprocess.run(argv, capture_output=True, text=True)
+            return cp.stdout or ""
+        except OSError:
+            return ""
 
 
 class OpenVpnManagerApp(Adw.Application):
