@@ -70,3 +70,43 @@ def test_gateway_and_subnet():
 
 def test_gateway_and_subnet_no_default():
     assert topology.gateway_and_subnet("") == (None, None)
+
+
+ARP = textwrap.dedent("""\
+    IP address       HW type     Flags       HW address            Mask     Device
+    192.168.1.1      0x1         0x2         e8:9f:80:8d:a0:c1     *        wlan0
+    192.168.1.211    0x1         0x2         e0:01:c7:f7:df:74     *        wlan0
+    192.168.1.240    0x1         0x2         00:00:00:00:00:00     *        wlan0
+""")
+
+NDISC = textwrap.dedent("""\
+    fe80::ea9f:80ff:fe8d:9749 dev wlan0 lladdr e8:9f:80:8d:97:49 router STALE
+    fe80::1 dev wlan0 lladdr 11:22:33:44:55:66 STALE
+""")
+
+
+def test_neighbors_parses_arp_and_ndisc():
+    devices = topology.neighbors(ARP, NDISC)
+    by_ip = {d.ip: d for d in devices}
+    assert "192.168.1.1" in by_ip
+    assert "192.168.1.211" in by_ip
+    assert "192.168.1.240" not in by_ip  # incomplete MAC is skipped
+    assert by_ip["192.168.1.211"].mac == "e0:01:c7:f7:df:74"
+
+
+def test_neighbors_excludes_own_ips():
+    devices = topology.neighbors(ARP, NDISC, own_ips=("192.168.1.211",))
+    assert all(d.ip != "192.168.1.211" for d in devices)
+
+
+def test_build_segment_splits_gateway():
+    devices = topology.neighbors(ARP, NDISC)
+    seg = topology.build_segment("192.168.1.1", "192.168.1.0/24", devices)
+    assert seg.subnet == "192.168.1.0/24"
+    assert seg.gateway.ip == "192.168.1.1"
+    assert seg.gateway.kind == "router"
+    assert all(d.ip != "192.168.1.1" for d in seg.devices)
+
+
+def test_build_segment_no_gateway():
+    assert topology.build_segment(None, None, []) is None

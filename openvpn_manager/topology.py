@@ -168,3 +168,67 @@ def gateway_and_subnet(route_text):
         return None, None
     _metric, iface, gw = default
     return _hex_ip(gw), connected.get(iface)
+
+
+def _arp_entries(arp_text):
+    """Yield (ip, mac) pairs from /proc/net/arp text."""
+    for line in arp_text.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0] == "IP":
+            continue
+        ip, mac = parts[0], parts[3]
+        if mac != "00:00:00:00:00:00":
+            yield ip, mac
+
+
+def _ndisc_entries(ndisc_text):
+    """Yield (ip, mac) pairs from `ip -6 neigh show` text."""
+    for line in ndisc_text.splitlines():
+        parts = line.split()
+        if not parts or "::" not in parts[0]:
+            continue
+        for i, part in enumerate(parts):
+            if part == "lladdr" and i + 1 < len(parts):
+                yield parts[0], parts[i + 1]
+                break
+
+
+def neighbors(arp_text, ndisc_text, own_ips=()):
+    """Parse neighbor caches into labeled Devices, excluding own addresses.
+
+    A host that appears in both caches is kept once (the IPv4 entry wins).
+    Labels are the vendor name from the MAC OUI when recognized, else
+    "Device". The gateway is intentionally kept so build_segment can pick it
+    out; it is not shown among the LAN devices.
+    """
+    own = set(own_ips)
+    by_mac = {}
+    for ip, mac in _arp_entries(arp_text):
+        if ip not in own and mac not in by_mac:
+            by_mac[mac] = (ip, mac)
+    for ip, mac in _ndisc_entries(ndisc_text):
+        if ip not in own and mac not in by_mac:
+            by_mac[mac] = (ip, mac)
+    devices = []
+    for ip, mac in by_mac.values():
+        name = vendor(mac)
+        devices.append(Device(kind="device", label=name or "Device",
+                              ip=ip, mac=mac, vendor=name))
+    return devices
+
+
+def build_segment(gateway_ip, cidr, devices):
+    """Split neighbor Devices into a gateway router and the LAN device list."""
+    if not gateway_ip:
+        return None
+    gw_mac = None
+    rest = []
+    for dev in devices:
+        if dev.ip == gateway_ip:
+            gw_mac = dev.mac
+        else:
+            rest.append(dev)
+    name = vendor(gw_mac)
+    gateway = Device(kind="router", label=name or "Router",
+                     ip=gateway_ip, mac=gw_mac, vendor=name)
+    return Segment(subnet=cidr or gateway_ip, gateway=gateway, devices=rest)
