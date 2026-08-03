@@ -37,6 +37,27 @@ case "$cmd" in
             printf 'auth-user-pass %s\n' "$creds" >> "$conf"
         fi
         ;;
+    scan)
+        # Populate the kernel ARP cache for a /24 subnet. The app re-reads
+        # /proc/net/arp afterwards, so this only needs every live host to
+        # answer an ARP request. Prefers arping; falls back to a broadcast
+        # ping when arping is not installed.
+        cidr="${2:?cidr required (e.g. 192.168.1.0/24)}"
+        base="${cidr%/*}"
+        prefix="${cidr#*/}"
+        if [ "$prefix" != "24" ]; then
+            echo "unsupported prefix: $prefix (only /24 is swept)" >&2
+            exit 3
+        fi
+        net="${base%.*}"
+        if command -v arping >/dev/null 2>&1; then
+            seq 1 254 | xargs -P 32 -I{} \
+                sh -c "arping -c 1 -w 1 '$net.{}' >/dev/null 2>&1" || true
+        else
+            # Hosts that answer the broadcast ping refresh their ARP entry.
+            ping -b -c 2 -W 1 "${net}.255" >/dev/null 2>&1 || true
+        fi
+        ;;
     *)
         echo "unknown command: $cmd" >&2
         exit 2

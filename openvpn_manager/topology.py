@@ -277,3 +277,8 @@ def connected_tunnels(profiles, tunnel_ips=(), runner=vpn.run,
         tunnels.append(Device(kind="tunnel", label=profile, ip=ip,
                               detail=remote))
     return tunnels
+
+
+def sweep_argv(cidr):
+    """Build the pkexec argv that runs the privileged ARP sweep."""
+    return ["pkexec", vpn.helper_path(), "scan", cidr]

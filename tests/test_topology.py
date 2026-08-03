@@ -153,3 +153,11 @@ def test_connected_tunnels_none_active(tmp_path):
 
     assert topology.connected_tunnels(["work"], runner=fake_runner,
                                       client_dir=str(tmp_path)) == []
+
+
+def test_sweep_argv():
+    argv = topology.sweep_argv("192.168.1.0/24")
+    assert argv[0] == "pkexec"
+    assert argv[1].endswith("helper.sh")
+    assert argv[2] == "scan"
+    assert argv[3] == "192.168.1.0/24"
