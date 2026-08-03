@@ -110,3 +110,18 @@ def test_build_segment_splits_gateway():
 
 def test_build_segment_no_gateway():
     assert topology.build_segment(None, None, []) is None
+
+
+ADDR = textwrap.dedent("""\
+    1: lo    inet 127.0.0.1/8 scope host lo
+    4: wlan0    inet 192.168.1.101/24 metric 600 brd 192.168.1.255 scope global dynamic wlan0
+    15: tun0    inet 10.8.0.2/24 scope global tun0
+""")
+
+
+def test_local_ips_skips_lo_and_tunnels():
+    assert topology.local_ips(ADDR) == ["192.168.1.101"]
+
+
+def test_tun_ips():
+    assert topology.tun_ips(ADDR) == ["10.8.0.2"]

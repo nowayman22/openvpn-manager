@@ -232,3 +232,29 @@ def build_segment(gateway_ip, cidr, devices):
     gateway = Device(kind="router", label=name or "Router",
                      ip=gateway_ip, mac=gw_mac, vendor=name)
     return Segment(subnet=cidr or gateway_ip, gateway=gateway, devices=rest)
+
+
+def _addr_entries(addr_text):
+    """Yield (iface, ip) pairs from `ip -o -4 addr show` text."""
+    iface = None
+    for line in addr_text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].endswith(":"):
+            iface = parts[1].rstrip(":")
+        if iface is None:
+            continue
+        for i, part in enumerate(parts):
+            if part == "inet" and i + 1 < len(parts):
+                yield iface, parts[i + 1].split("/")[0]
+
+
+def local_ips(addr_text):
+    """IPv4 addresses on up physical interfaces (not loopback or tunnels)."""
+    return [ip for iface, ip in _addr_entries(addr_text)
+            if not iface.startswith(("tun", "tap", "lo"))]
+
+
+def tun_ips(addr_text):
+    """IPv4 addresses on tun/tap (tunnel) interfaces."""
+    return [ip for iface, ip in _addr_entries(addr_text)
+            if iface.startswith(("tun", "tap"))]
