@@ -199,3 +199,61 @@ def test_sweep_argv():
     assert argv[1].endswith("helper.sh")
     assert argv[2] == "scan"
     assert argv[3] == "192.168.1.0/24"
+
+
+def test_build_tree_topology_shape():
+    lan = Segment(subnet="192.168.1.0/24",
+                  gateway=Device(kind="router", label="Router", ip="192.168.1.1"),
+                  devices=[Device(kind="device", label="Pi", ip="192.168.1.211")])
+    auto_tun = [Device(kind="tunnel", label="home", ip="10.8.0.2", detail="vpn.example.com")]
+    topo = topology.build_tree_topology("myhost", ["192.168.1.101"], lan, auto_tun)
+    assert topo.root.id == "pc"
+    assert topo.root.kind == "pc"
+    assert len(topo.devices) == 4  # pc + router + Pi + tunnel
+    ids = {d.id for d in topo.devices}
+    assert "lan:192.168.1.1" in ids
+    assert "lan:192.168.1.211" in ids
+    assert "tun:home" in ids
+    # PC -> router (solid), PC -> tunnel (dashed), router -> Pi (solid)
+    styles = {(e.source_id, e.target_id): e.style for e in topo.edges}
+    assert styles[("pc", "lan:192.168.1.1")] == "solid"
+    assert styles[("pc", "tun:home")] == "dashed"
+    assert styles[("lan:192.168.1.1", "lan:192.168.1.211")] == "solid"
+
+
+def test_build_tree_topology_no_lan():
+    topo = topology.build_tree_topology("myhost", ["192.168.1.101"], None, [])
+    assert topo.root.id == "pc"
+    assert len(topo.devices) == 1  # just pc
+    assert topo.edges == []
+
+
+def test_build_tree_topology_manual_tunnels():
+    manual = [Device(kind="tunnel", label="relay", id="manual:relay",
+                     parent_id="tun:home", manual=True, protocol="SSH")]
+    lan = Segment(subnet="192.168.1.0/24",
+                  gateway=Device(kind="router", label="Router", ip="192.168.1.1"))
+    auto_tun = [Device(kind="tunnel", label="home", ip="10.8.0.2", detail="vpn.example.com")]
+    topo = topology.build_tree_topology("myhost", [], lan, auto_tun, manual)
+    ids = {d.id for d in topo.devices}
+    assert "manual:relay" in ids
+    styles = {(e.source_id, e.target_id): e.style for e in topo.edges}
+    assert styles[("tun:home", "manual:relay")] == "dashed"
+
+
+def test_chain_tunnels():
+    tunnels = [
+        Device(kind="tunnel", label="outer", ip="10.8.0.2", detail="vpn.example.com"),
+        Device(kind="tunnel", label="inner", ip="10.5.0.1", detail="10.8.0.2"),
+    ]
+    pairs = topology.chain_tunnels(tunnels)
+    assert len(pairs) == 1
+    assert pairs[0] == ("tunnel:outer", "tunnel:inner")
+
+
+def test_chain_tunnels_no_match():
+    tunnels = [
+        Device(kind="tunnel", label="a", ip="10.8.0.2"),
+        Device(kind="tunnel", label="b", ip="10.9.0.1"),
+    ]
+    assert topology.chain_tunnels(tunnels) == []

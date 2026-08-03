@@ -327,3 +327,83 @@ def connected_tunnels(profiles, tunnel_ips=(), runner=vpn.run,
 def sweep_argv(cidr):
     """Build the pkexec argv that runs the privileged ARP sweep."""
     return ["pkexec", vpn.helper_path(), "scan", cidr]
+
+
+def chain_tunnels(tunnels):
+    """Return (parent_id, child_id) pairs for nested VPNs.
+
+    A tunnel whose detail (remote endpoint) matches another tunnel's assigned
+    IP is considered a child (chained through the first tunnel).
+    """
+    pairs = []
+    for child in tunnels:
+        if not child.detail or not child.ip:
+            continue
+        for parent in tunnels:
+            if parent is child:
+                continue
+            if parent.ip == child.detail:
+                pairs.append((parent.id, child.id))
+    return pairs
+
+
+def build_tree_topology(hostname, local_ips, lan, auto_tunnels,
+                        manual_tunnels=None):
+    """Build a full tree Topology from discovered and manual devices.
+
+    Auto-detected devices get IDs computed from kind+label (or kind+ip for
+    LAN devices). Manual devices already carry their ID from persistence.
+    The PC (id="pc") is the root. LAN gateway attaches to PC; each LAN device
+    attaches to the gateway. Each auto tunnel attaches to PC (dashed edge),
+    then chain_tunnels rewires nested ones. Manual tunnels keep their stored
+    parent_id.
+    """
+    manual_tunnels = list(manual_tunnels or [])
+    devices = []
+    edges = []
+
+    root = Device(id="pc", kind="pc", label=hostname)
+    devices.append(root)
+
+    # Set parent_id on auto-tunnel devices and assign IDs
+    for t in auto_tunnels:
+        t.id = f"tun:{t.label}"
+        t.parent_id = "pc"
+        devices.append(t)
+
+    # Chain: re-parent nested auto-tunnels
+    for parent_id, child_id in chain_tunnels(auto_tunnels):
+        for t in auto_tunnels:
+            if t.id == child_id:
+                t.parent_id = parent_id
+                break
+
+    if lan is not None:
+        gw = lan.gateway
+        gw.id = f"lan:{gw.ip}"
+        gw.kind = "router"
+        gw.parent_id = "pc"
+        devices.append(gw)
+        edges.append(Edge(source_id="pc", target_id=gw.id, style="solid"))
+
+        for dev in lan.devices:
+            dev.id = f"lan:{dev.ip}"
+            dev.parent_id = gw.id
+            devices.append(dev)
+            edges.append(Edge(source_id=gw.id, target_id=dev.id, style="solid"))
+
+    # Auto-tunnel edges (dashed)
+    for t in auto_tunnels:
+        edges.append(Edge(source_id=t.parent_id, target_id=t.id, style="dashed"))
+
+    # Manual tunnels: keep their stored parent_id, append to devices+edges
+    for mt in manual_tunnels:
+        mt.kind = "tunnel"
+        mt.manual = True
+        devices.append(mt)
+        parent = mt.parent_id or "pc"
+        edges.append(Edge(source_id=parent, target_id=mt.id, style="dashed"))
+
+    return Topology(hostname=hostname, local_ips=list(local_ips or []),
+                    root=root, devices=devices, edges=edges,
+                    lan=lan, tunnels=list(auto_tunnels))
