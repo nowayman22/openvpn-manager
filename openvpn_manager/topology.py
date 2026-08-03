@@ -258,3 +258,22 @@ def tun_ips(addr_text):
     """IPv4 addresses on tun/tap (tunnel) interfaces."""
     return [ip for iface, ip in _addr_entries(addr_text)
             if iface.startswith(("tun", "tap"))]
+
+
+def connected_tunnels(profiles, tunnel_ips=(), runner=vpn.run,
+                      client_dir=vpn.CLIENT_DIR):
+    """Build a Device per connected OpenVPN profile.
+
+    tunnel_ips are IPv4 addresses on tun/tap interfaces, attributed to active
+    tunnels in order; this is best-effort when more than one tunnel is up.
+    runner and client_dir are injectable for tests.
+    """
+    tunnels = []
+    for profile in profiles:
+        if vpn.is_active(profile, runner) != "active":
+            continue
+        remote, _proto = vpn.parse_remote(f"{client_dir}/{profile}.conf")
+        ip = tunnel_ips[len(tunnels)] if len(tunnels) < len(tunnel_ips) else None
+        tunnels.append(Device(kind="tunnel", label=profile, ip=ip,
+                              detail=remote))
+    return tunnels

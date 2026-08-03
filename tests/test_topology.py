@@ -1,3 +1,4 @@
+import subprocess
 import textwrap
 
 from openvpn_manager import topology
@@ -125,3 +126,30 @@ def test_local_ips_skips_lo_and_tunnels():
 
 def test_tun_ips():
     assert topology.tun_ips(ADDR) == ["10.8.0.2"]
+
+
+def test_connected_tunnels_active(tmp_path):
+    (tmp_path / "work.conf").write_text("remote vpn.example.com 1194\nproto udp\n")
+    (tmp_path / "home.conf").write_text("remote home.example.net 1194\n")
+
+    def fake_runner(argv):
+        unit = argv[-1]
+        state = "active" if unit.endswith("@work") else "inactive"
+        return subprocess.CompletedProcess(argv, 0, stdout=state + "\n", stderr="")
+
+    tunnels = topology.connected_tunnels(
+        ["home", "work"], tunnel_ips=["10.8.0.2"],
+        runner=fake_runner, client_dir=str(tmp_path))
+    assert len(tunnels) == 1
+    assert tunnels[0].kind == "tunnel"
+    assert tunnels[0].label == "work"
+    assert tunnels[0].ip == "10.8.0.2"
+    assert tunnels[0].detail == "vpn.example.com"
+
+
+def test_connected_tunnels_none_active(tmp_path):
+    def fake_runner(argv):
+        return subprocess.CompletedProcess(argv, 0, stdout="inactive\n", stderr="")
+
+    assert topology.connected_tunnels(["work"], runner=fake_runner,
+                                      client_dir=str(tmp_path)) == []
