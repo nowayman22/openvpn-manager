@@ -143,13 +143,25 @@ def _mask_to_prefix(mask_hex):
     return bin(value).count("1")
 
 
+_TUNNEL_IFACE_PREFIXES = ("tun", "tap", "ppp", "wg", "vpn", "ipsec",
+                          "gretap", "erspan")
+
+
+def _is_tunnel_iface(iface):
+    return iface.startswith(_TUNNEL_IFACE_PREFIXES)
+
+
 def gateway_and_subnet(route_text):
     """Return (gateway_ip, cidr) from /proc/net/route, or (None, None).
 
-    Address fields are hex little-endian: 0101A8C0 is 192.168.1.1. The subnet
-    is the directly-connected route on the default gateway's interface.
+    Address fields are hex little-endian: 0101A8C0 is 192.168.1.1. The
+    gateway is the lowest-metric default route on a physical interface,
+    falling back to any default route (so a VPN that overrides the default
+    route does not hide the LAN gateway). The subnet is the connected route
+    on that interface with the largest prefix below /32: a /32 host route to
+    the gateway is common and is not the LAN subnet.
     """
-    default = None
+    defaults = []
     connected = {}
     for line in route_text.splitlines():
         parts = line.split()
@@ -157,17 +169,25 @@ def gateway_and_subnet(route_text):
             continue
         iface, dest, gw, _flags, _ref, _use, metric_hex, mask = parts[:8]
         if dest == "00000000" and gw != "00000000":
-            metric = int(metric_hex, 16)
-            if default is None or metric < default[0]:
-                default = (metric, iface, gw)
+            try:
+                metric = int(metric_hex, 16)
+            except ValueError:
+                metric = 1 << 30
+            defaults.append((metric, iface, gw, _is_tunnel_iface(iface)))
         elif gw == "00000000" and dest != "00000000":
+            prefix = _mask_to_prefix(mask)
             net = _hex_ip(dest)
-            if net is not None:
-                connected[iface] = f"{net}/{_mask_to_prefix(mask)}"
-    if default is None:
+            if net is not None and prefix < 32:
+                cur = connected.get(iface)
+                if cur is None or prefix > cur[1]:
+                    connected[iface] = (net, prefix)
+    if not defaults:
         return None, None
-    _metric, iface, gw = default
-    return _hex_ip(gw), connected.get(iface)
+    physical = [d for d in defaults if not d[3]]
+    _metric, iface, gw, _tunnel = min(physical or defaults, key=lambda d: d[0])
+    info = connected.get(iface)
+    cidr = f"{info[0]}/{info[1]}" if info else None
+    return _hex_ip(gw), cidr
 
 
 def _arp_entries(arp_text):

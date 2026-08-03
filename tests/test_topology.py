@@ -73,6 +73,28 @@ def test_gateway_and_subnet_no_default():
     assert topology.gateway_and_subnet("") == (None, None)
 
 
+def test_gateway_and_subnet_ignores_gateway_host_route():
+    # A /32 host route to the gateway must not replace the /24 LAN subnet.
+    routes = ROUTE + "\n" + textwrap.dedent("""\
+        wlan0	0101A8C0	00000000	0005	0	0	600	FFFFFFFF	0	0	0
+    """)
+    gw, cidr = topology.gateway_and_subnet(routes)
+    assert gw == "192.168.1.1"
+    assert cidr == "192.168.1.0/24"
+
+
+def test_gateway_and_subnet_prefers_physical_default():
+    # A VPN default route (lower metric via tun) must not hide the LAN gateway.
+    routes = textwrap.dedent("""\
+        tun2	00000000	39C0660A	0003	0	0	0	00000080	0	0	0
+        wlan0	00000000	0101A8C0	0003	0	0	600	00000000	0	0	0
+        wlan0	0001A8C0	00000000	0001	0	0	600	00FFFFFF	0	0	0
+    """).strip()
+    gw, cidr = topology.gateway_and_subnet(routes)
+    assert gw == "192.168.1.1"
+    assert cidr == "192.168.1.0/24"
+
+
 ARP = textwrap.dedent("""\
     IP address       HW type     Flags       HW address            Mask     Device
     192.168.1.1      0x1         0x2         e8:9f:80:8d:a0:c1     *        wlan0
