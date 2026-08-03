@@ -1,5 +1,6 @@
 import subprocess
 import textwrap
+import tomllib
 
 from openvpn_manager import topology
 from openvpn_manager.topology import Device, Edge, Segment, build_topology
@@ -257,3 +258,35 @@ def test_chain_tunnels_no_match():
         Device(kind="tunnel", label="b", ip="10.9.0.1"),
     ]
     assert topology.chain_tunnels(tunnels) == []
+
+
+def test_save_and_load_manual_tunnels(tmp_path):
+    path = tmp_path / "topology.toml"
+    devs = [
+        Device(id="manual:t1", kind="tunnel", label="relay", parent_id="pc",
+               manual=True, protocol="WireGuard",
+               detail="relay.example.com"),
+        Device(id="manual:t2", kind="tunnel", label="inner", parent_id="tun:home",
+               manual=True, protocol="SSH",
+               detail="10.8.0.5"),
+    ]
+    topology.save_manual_tunnels(devs, path)
+    loaded = topology.load_manual_tunnels(path)
+    assert len(loaded) == 2
+    assert loaded[0].id == "manual:t1"
+    assert loaded[0].parent_id == "pc"
+    assert loaded[0].protocol == "WireGuard"
+    assert loaded[0].manual is True
+    assert loaded[1].id == "manual:t2"
+    assert loaded[1].parent_id == "tun:home"
+    assert loaded[1].protocol == "SSH"
+
+
+def test_load_manual_tunnels_missing_file(tmp_path):
+    assert topology.load_manual_tunnels(tmp_path / "nope.toml") == []
+
+
+def test_load_manual_tunnels_malformed(tmp_path):
+    path = tmp_path / "topology.toml"
+    path.write_text("not valid toml at all [[[")
+    assert topology.load_manual_tunnels(path) == []

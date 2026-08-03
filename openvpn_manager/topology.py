@@ -4,7 +4,10 @@ All system reads go through injectable readers so this module is testable
 without touching the real network.
 """
 
+import tomllib
+import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import vpn
 
@@ -407,3 +410,71 @@ def build_tree_topology(hostname, local_ips, lan, auto_tunnels,
     return Topology(hostname=hostname, local_ips=list(local_ips or []),
                     root=root, devices=devices, edges=edges,
                     lan=lan, tunnels=list(auto_tunnels))
+
+
+_MANUAL_CONFIG_PATH = Path.home() / ".config" / "openvpn-manager" / "topology.toml"
+
+
+def load_manual_tunnels(path=None):
+    """Read manual tunnel definitions from a TOML config file.
+
+    Returns a list of Device(kind="tunnel", manual=True) or [] when the file
+    is missing or malformed.
+    """
+    if path is None:
+        path = _MANUAL_CONFIG_PATH
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    entries = data.get("tunnels")
+    if not isinstance(entries, list):
+        return []
+    result = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        dev = Device(
+            id=entry.get("id") or f"manual:{uuid.uuid4().hex[:8]}",
+            kind="tunnel",
+            label=entry.get("label", "tunnel"),
+            parent_id=entry.get("parent_id", "pc"),
+            manual=True,
+            protocol=entry.get("protocol"),
+            detail=entry.get("remote"),
+        )
+        result.append(dev)
+    return result
+
+
+def save_manual_tunnels(devices, path=None):
+    """Write manual-only Device entries to a TOML config file.
+
+    Creates the parent directory on first save. Auto-detected devices are
+    never written.
+    """
+    if path is None:
+        path = _MANUAL_CONFIG_PATH
+    entries = []
+    for dev in devices:
+        if not dev.manual:
+            continue
+        entries.append({
+            "id": dev.id,
+            "label": dev.label,
+            "parent_id": dev.parent_id or "pc",
+            "remote": dev.detail,
+            "protocol": dev.protocol,
+        })
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as fh:
+        for entry in entries:
+            fh.write("[[tunnels]]\n")
+            for key, val in entry.items():
+                if val is not None:
+                    fh.write(f"{key} = {val!r}\n")
+            fh.write("\n")
