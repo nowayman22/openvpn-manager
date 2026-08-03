@@ -2,7 +2,7 @@ import subprocess
 import textwrap
 
 from openvpn_manager import topology
-from openvpn_manager.topology import Device, Segment, build_topology
+from openvpn_manager.topology import Device, Edge, Segment, build_topology
 
 
 ROUTE = textwrap.dedent("""\
@@ -13,13 +13,17 @@ ROUTE = textwrap.dedent("""\
 
 
 def test_build_topology_shape():
-    lan = Segment(subnet="192.168.1.0/24",
-                  gateway=Device(kind="router", label="Router", ip="192.168.1.1"))
-    topo = build_topology("myhost", ["192.168.1.101"], lan, [])
+    root = Device(id="pc", kind="pc", label="myhost")
+    lan_dev = Device(id="lan:192.168.1.1", kind="router", label="Router",
+                     ip="192.168.1.1", parent_id="pc")
+    topo = build_topology("myhost", ["192.168.1.101"], root=root,
+                          devices=[root, lan_dev],
+                          edges=[Edge(source_id="pc", target_id="lan:192.168.1.1", style="solid")])
     assert topo.hostname == "myhost"
     assert topo.local_ips == ["192.168.1.101"]
-    assert topo.lan is lan
-    assert topo.tunnels == []
+    assert topo.root is root
+    assert len(topo.devices) == 2
+    assert len(topo.edges) == 1
 
 
 def test_build_topology_defaults():
@@ -27,14 +31,26 @@ def test_build_topology_defaults():
     assert topo.local_ips == []
     assert topo.lan is None
     assert topo.tunnels == []
+    assert topo.root is None
+    assert topo.devices == []
+    assert topo.edges == []
 
 
 def test_device_defaults():
-    dev = Device(kind="tunnel", label="work")
+    dev = Device(id="tunnel:work", kind="tunnel", label="work")
     assert dev.ip is None
     assert dev.mac is None
     assert dev.vendor is None
     assert dev.detail is None
+    assert dev.parent_id is None
+    assert dev.manual is False
+    assert dev.protocol is None
+
+
+def test_device_id_default():
+    dev = Device(kind="tunnel", label="work")
+    # id defaults to kind:label when not given
+    assert dev.id == "tunnel:work"
 
 
 def test_vendor_known(monkeypatch):

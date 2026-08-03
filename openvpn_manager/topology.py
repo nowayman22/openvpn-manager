@@ -12,12 +12,28 @@ from . import vpn
 @dataclass
 class Device:
     """One node in the topology: a router, a LAN device, or a tunnel."""
-    kind: str                # "router" | "device" | "tunnel"
+    kind: str                # "pc" | "router" | "device" | "tunnel"
     label: str
     ip: str | None = None
     mac: str | None = None
     vendor: str | None = None
     detail: str | None = None
+    id: str | None = None           # unique; defaults to f"{kind}:{label}"
+    parent_id: str | None = None
+    manual: bool = False
+    protocol: str | None = None     # "SSH" | "WireGuard" | "OpenVPN" | "Other"
+
+    def __post_init__(self):
+        if self.id is None:
+            self.id = f"{self.kind}:{self.label}"
+
+
+@dataclass
+class Edge:
+    """A connection between two devices in the topology tree."""
+    source_id: str
+    target_id: str
+    style: str    # "solid" | "dashed"
 
 
 @dataclass
@@ -33,14 +49,23 @@ class Topology:
     """The full topology model rooted at this machine."""
     hostname: str
     local_ips: list[str] = field(default_factory=list)
+    root: Device | None = None
+    devices: list[Device] = field(default_factory=list)
+    edges: list[Edge] = field(default_factory=list)
+    # Deprecated: kept for backward compat; tree rendering uses root/devices/edges.
     lan: Segment | None = None
     tunnels: list[Device] = field(default_factory=list)
 
 
-def build_topology(hostname, local_ips=None, lan=None, tunnels=None):
+def build_topology(hostname, local_ips=None, root=None, devices=None,
+                   edges=None, lan=None, tunnels=None):
     """Compose a Topology from its parts (thin wrapper, testable)."""
-    return Topology(hostname=hostname, local_ips=list(local_ips or []),
-                    lan=lan, tunnels=list(tunnels or []))
+    return Topology(hostname=hostname,
+                    local_ips=list(local_ips or []),
+                    root=root, lan=lan,
+                    devices=list(devices or []),
+                    edges=list(edges or []),
+                    tunnels=list(tunnels or []))
 
 
 #: Bundled MAC OUI prefix -> vendor map for common home/network devices.
