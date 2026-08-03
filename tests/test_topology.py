@@ -1,5 +1,14 @@
+import textwrap
+
 from openvpn_manager import topology
 from openvpn_manager.topology import Device, Segment, build_topology
+
+
+ROUTE = textwrap.dedent("""\
+    Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+    wlan0	00000000	0101A8C0	0003	0	0	600	00000000	0	0	0
+    wlan0	0001A8C0	00000000	0001	0	0	600	00FFFFFF	0	0	0
+""").strip()
 
 
 def test_build_topology_shape():
@@ -51,3 +60,13 @@ def test_vendor_bad_mac():
 def test_vendor_fallback_map(monkeypatch):
     monkeypatch.setattr(topology, "_oui_cache", dict(topology._OUI_FALLBACK))
     assert topology.vendor("B8:27:EB:12:34:56") == "Raspberry Pi"
+
+
+def test_gateway_and_subnet():
+    gw, cidr = topology.gateway_and_subnet(ROUTE)
+    assert gw == "192.168.1.1"
+    assert cidr == "192.168.1.0/24"
+
+
+def test_gateway_and_subnet_no_default():
+    assert topology.gateway_and_subnet("") == (None, None)

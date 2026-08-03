@@ -123,3 +123,48 @@ def vendor(mac, oui_text=None):
     if prefix is None:
         return None
     return _oui_table(oui_text).get(prefix)
+
+
+def _hex_ip(hexval):
+    """Convert a /proc/net/route hex address field to a dotted quad."""
+    try:
+        raw = int(hexval, 16).to_bytes(4, "big")
+    except (ValueError, OverflowError):
+        return None
+    return ".".join(str(byte) for byte in reversed(raw))
+
+
+def _mask_to_prefix(mask_hex):
+    """Convert a /proc/net/route netmask field to a prefix length."""
+    try:
+        value = int(mask_hex, 16)
+    except ValueError:
+        return 24
+    return bin(value).count("1")
+
+
+def gateway_and_subnet(route_text):
+    """Return (gateway_ip, cidr) from /proc/net/route, or (None, None).
+
+    Address fields are hex little-endian: 0101A8C0 is 192.168.1.1. The subnet
+    is the directly-connected route on the default gateway's interface.
+    """
+    default = None
+    connected = {}
+    for line in route_text.splitlines():
+        parts = line.split()
+        if len(parts) < 8 or parts[0] == "Iface":
+            continue
+        iface, dest, gw, _flags, _ref, _use, metric_hex, mask = parts[:8]
+        if dest == "00000000" and gw != "00000000":
+            metric = int(metric_hex, 16)
+            if default is None or metric < default[0]:
+                default = (metric, iface, gw)
+        elif gw == "00000000" and dest != "00000000":
+            net = _hex_ip(dest)
+            if net is not None:
+                connected[iface] = f"{net}/{_mask_to_prefix(mask)}"
+    if default is None:
+        return None, None
+    _metric, iface, gw = default
+    return _hex_ip(gw), connected.get(iface)
