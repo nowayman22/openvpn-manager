@@ -321,3 +321,79 @@ def test_compute_layout_sibling_spacing():
     # siblings have same x, different y
     assert by_id["tun:a"].x == by_id["tun:b"].x
     assert abs(by_id["tun:a"].y - by_id["tun:b"].y) > 0
+
+
+def test_delete_manual_tunnel_reparents_children():
+    tunnels = [
+        Device(id="manual:a", kind="tunnel", label="a", parent_id="pc", manual=True),
+        Device(id="manual:b", kind="tunnel", label="b", parent_id="manual:a", manual=True),
+        Device(id="manual:c", kind="tunnel", label="c", parent_id="manual:a", manual=True),
+    ]
+    out = topology.delete_manual_tunnel(tunnels, "manual:a")
+    assert [t.id for t in out] == ["manual:b", "manual:c"]
+    assert all(t.parent_id == "pc" for t in out)
+
+
+def test_delete_manual_tunnel_reparents_to_removed_parent():
+    tunnels = [
+        Device(id="manual:a", kind="tunnel", label="a", parent_id="tun:home", manual=True),
+        Device(id="manual:b", kind="tunnel", label="b", parent_id="manual:a", manual=True),
+    ]
+    out = topology.delete_manual_tunnel(tunnels, "manual:a")
+    assert len(out) == 1
+    assert out[0].id == "manual:b"
+    assert out[0].parent_id == "tun:home"
+
+
+def test_delete_manual_tunnel_missing_id():
+    tunnels = [Device(id="manual:a", kind="tunnel", label="a", manual=True)]
+    out = topology.delete_manual_tunnel(tunnels, "manual:nope")
+    assert out == tunnels
+
+
+def test_update_manual_tunnel():
+    tunnels = [Device(id="manual:a", kind="tunnel", label="a", parent_id="pc",
+                      manual=True, protocol="SSH", detail="old.example.com")]
+    out = topology.update_manual_tunnel(
+        tunnels, "manual:a", label="b", parent_id="tun:home",
+        remote="new.example.com", protocol="WireGuard")
+    assert len(out) == 1
+    assert out[0].id == "manual:a"
+    assert out[0].label == "b"
+    assert out[0].parent_id == "tun:home"
+    assert out[0].detail == "new.example.com"
+    assert out[0].protocol == "WireGuard"
+    assert out[0].manual is True
+
+
+def test_update_manual_tunnel_missing_id():
+    tunnels = [Device(id="manual:a", kind="tunnel", label="a", manual=True)]
+    out = topology.update_manual_tunnel(
+        tunnels, "manual:nope", label="x", parent_id="pc",
+        remote="r.example.com", protocol="SSH")
+    assert out == tunnels
+
+
+def test_descendant_ids_multilevel():
+    tunnels = [
+        Device(id="pc", kind="pc", label="host"),
+        Device(id="manual:a", kind="tunnel", label="a", parent_id="pc", manual=True),
+        Device(id="manual:b", kind="tunnel", label="b", parent_id="manual:a", manual=True),
+        Device(id="manual:c", kind="tunnel", label="c", parent_id="manual:b", manual=True),
+        Device(id="manual:d", kind="tunnel", label="d", parent_id="pc", manual=True),
+    ]
+    assert topology.descendant_ids(tunnels, "manual:a") == {"manual:b", "manual:c"}
+    assert topology.descendant_ids(tunnels, "manual:d") == set()
+
+
+def test_descendant_ids_leaf():
+    tunnels = [Device(id="manual:a", kind="tunnel", label="a", parent_id="pc", manual=True)]
+    assert topology.descendant_ids(tunnels, "manual:a") == set()
+
+
+def test_descendant_ids_cycle_terminates():
+    tunnels = [
+        Device(id="manual:a", kind="tunnel", label="a", parent_id="manual:b", manual=True),
+        Device(id="manual:b", kind="tunnel", label="b", parent_id="manual:a", manual=True),
+    ]
+    assert topology.descendant_ids(tunnels, "manual:a") == {"manual:b"}

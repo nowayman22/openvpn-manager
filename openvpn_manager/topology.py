@@ -533,3 +533,63 @@ def compute_layout(topo, col_width=160, node_pad=12, level_pad=80):
         layout_subtree(topo.root, 0)
 
     return sorted(boxes.values(), key=lambda b: (b.x, b.y))
+
+
+def delete_manual_tunnel(tunnels, tunnel_id):
+    """Remove a manual tunnel, re-parenting its children to its parent.
+
+    Children (tunnels whose parent_id is the removed tunnel) are re-parented
+    to the removed tunnel's parent, or "pc" when it had none. Returns a new
+    list; the input list is not modified structurally. Missing id returns the
+    input list unchanged.
+    """
+    removed = None
+    out = []
+    for t in tunnels:
+        if t.id == tunnel_id:
+            removed = t
+            continue
+        out.append(t)
+    if removed is None:
+        return tunnels
+    parent = removed.parent_id or "pc"
+    for t in out:
+        if t.parent_id == tunnel_id:
+            t.parent_id = parent
+    return out
+
+
+def update_manual_tunnel(tunnels, tunnel_id, *, label, parent_id, remote,
+                         protocol):
+    """Replace the matching manual tunnel's editable fields in place.
+
+    The tunnel's id and manual flag are preserved. Missing id returns the
+    input list unchanged.
+    """
+    for t in tunnels:
+        if t.id == tunnel_id:
+            t.label = label
+            t.parent_id = parent_id
+            t.protocol = protocol
+            t.detail = remote
+    return tunnels
+
+
+def descendant_ids(tunnels, tunnel_id):
+    """Return every id reachable from tunnel_id by following parent_id links.
+
+    Used to build a parent picker that excludes a node and its whole subtree
+    (prevents cycles). A cycle terminates because visited ids are tracked.
+    """
+    children = {}
+    for t in tunnels:
+        children.setdefault(t.parent_id or "pc", []).append(t.id)
+    result = set()
+    stack = list(children.get(tunnel_id, []))
+    while stack:
+        cid = stack.pop()
+        if cid in result or cid == tunnel_id:
+            continue
+        result.add(cid)
+        stack.extend(children.get(cid, []))
+    return result
