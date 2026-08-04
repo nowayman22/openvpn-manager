@@ -77,8 +77,19 @@ def needs_credentials(conf_path: str) -> bool:
     return False
 
 
+#: Root-owned copy installed by install.sh so the polkit rule can authorize it
+#: without allowing the user to tamper with the script.
+_HELPER_INSTALLED_PATH = "/usr/lib/openvpn-manager/helper.sh"
+
+
 def helper_path() -> str:
-    """Absolute path to the privileged helper script shipped in the package."""
+    """Absolute path to the privileged helper script.
+
+    Prefers the root-owned installed copy; falls back to the copy shipped in
+    the package when running uninstalled (e.g. from a checkout).
+    """
+    if os.path.exists(_HELPER_INSTALLED_PATH):
+        return _HELPER_INSTALLED_PATH
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "helper.sh")
 
 

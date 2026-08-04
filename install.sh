@@ -10,8 +10,12 @@ echo "Installing OpenVPN Manager from $PROJECT_DIR"
 
 mkdir -p "$APP_DIR" "$ICON_DIR"
 
-# The privileged helper (invoked via pkexec) must be executable.
+# The privileged helper (invoked via pkexec) must be executable and root-owned
+# so the polkit rule can grant it without a password. The root-owned copy is
+# what the app uses after installation.
 chmod +x "$PROJECT_DIR/openvpn_manager/helper.sh"
+sudo install -D -m755 "$PROJECT_DIR/openvpn_manager/helper.sh" \
+    /usr/lib/openvpn-manager/helper.sh
 
 install -m644 "$PROJECT_DIR/packaging/openvpn-manager.svg" "$ICON_DIR/openvpn-manager.svg"
 

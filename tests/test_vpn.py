@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 from openvpn_manager import vpn
@@ -106,7 +107,14 @@ def test_setcreds_argv():
 
 
 def test_helper_path_points_at_shipped_script():
+    # Without an installed copy, helper_path falls back to the shipped script.
     path = vpn.helper_path()
-    assert path.endswith("openvpn_manager/helper.sh")
-    import os
     assert os.path.isfile(path)
+    assert path.endswith("openvpn_manager/helper.sh")
+
+
+def test_helper_path_prefers_installed_copy(monkeypatch, tmp_path):
+    installed = tmp_path / "helper.sh"
+    installed.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(vpn, "_HELPER_INSTALLED_PATH", str(installed))
+    assert vpn.helper_path() == str(installed)
