@@ -33,6 +33,7 @@ class TopologyDiagram(Gtk.DrawingArea):
         self._on_context_menu = on_context_menu
         self._topo = None
         self._boxes = []
+        self._tunnel_status = {}
         self._hover_id = None
         self._total_w = 200
         self._total_h = 200
@@ -46,6 +47,9 @@ class TopologyDiagram(Gtk.DrawingArea):
 
     def set_topology(self, topo):
         self._topo = topo
+        live = {d.id for d in topo.devices}
+        self._tunnel_status = {k: v for k, v in self._tunnel_status.items()
+                               if k in live}
         self._boxes = compute_layout(topo, col_width=NODE_W,
                                      node_pad=NODE_PAD, level_pad=LEVEL_PAD)
         max_x = max((b.x + NODE_W for b in self._boxes), default=200)
@@ -54,6 +58,11 @@ class TopologyDiagram(Gtk.DrawingArea):
         self._total_h = max_y + 40
         self.set_content_width(int(self._total_w))
         self.set_content_height(int(self._total_h))
+        self.queue_draw()
+
+    def set_tunnel_status(self, device_id, status):
+        """Record a tunnel connectivity test result and redraw."""
+        self._tunnel_status[device_id] = status
         self.queue_draw()
 
     def _draw(self, _area, cr, width, height):
@@ -155,6 +164,29 @@ class TopologyDiagram(Gtk.DrawingArea):
             cr.set_source_rgb(0.60, 0.75, 0.35)
             cr.arc(x + w - 14, y + 14, 5, 0, 2 * 3.14159)
             cr.fill()
+
+        # connectivity test status dot (bottom-left)
+        if dev.kind == "tunnel":
+            status = self._tunnel_status.get(dev.id)
+            sx, sy = x + 14, y + h - 14
+            if status == "testing":
+                cr.set_source_rgb(0.95, 0.65, 0.10)   # amber
+                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
+                cr.fill()
+            elif status == "ok":
+                cr.set_source_rgb(0.45, 0.75, 0.35)   # green
+                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
+                cr.fill()
+            elif status == "fail":
+                cr.set_source_rgb(0.85, 0.35, 0.32)   # red
+                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
+                cr.fill()
+            else:
+                # never tested: faint outline
+                cr.set_source_rgba(0.45, 0.48, 0.55, 0.5)
+                cr.arc(sx, sy, 4, 0, 2 * 3.14159)
+                cr.set_line_width(1.0)
+                cr.stroke()
 
     @staticmethod
     def _rounded_rect(cr, x, y, w, h, r=CORNER_RADIUS):
