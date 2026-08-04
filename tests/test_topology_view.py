@@ -104,3 +104,12 @@ def test_left_click_does_not_open_context_menu():
                       box.x + box.w / 2, box.y + box.h / 2)
 
     assert calls == []
+
+
+def test_tunnel_dot_maps_connection_stages():
+    from openvpn_manager.topology_diagram import tunnel_dot
+    assert tunnel_dot("connected") == tunnel_dot("ok")
+    assert tunnel_dot("connecting") == tunnel_dot("testing")
+    assert tunnel_dot("failed") == tunnel_dot("fail")
+    assert tunnel_dot("disconnected") is None
+    assert tunnel_dot(None) is None

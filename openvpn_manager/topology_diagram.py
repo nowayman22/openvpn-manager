@@ -18,6 +18,22 @@ TUNNEL_AUTO_BORDER = (0.66, 0.71, 0.40)  # success
 TUNNEL_MANUAL_BORDER = (0.50, 0.55, 0.65)
 EDGE_COLOR = (0.49, 0.68, 0.64)
 
+#: Tunnel status -> (fill rgb, radius). Statuses without a mapping paint a
+#: faint outline instead.
+_TUNNEL_DOT = {
+    "connected": (0.45, 0.75, 0.35, 5),
+    "ok": (0.45, 0.75, 0.35, 5),
+    "connecting": (0.95, 0.65, 0.10, 5),
+    "testing": (0.95, 0.65, 0.10, 5),
+    "failed": (0.85, 0.35, 0.32, 5),
+    "fail": (0.85, 0.35, 0.32, 5),
+}
+
+
+def tunnel_dot(status):
+    """Return (r, g, b, radius) for a tunnel status, or None for outline."""
+    return _TUNNEL_DOT.get(status)
+
 NODE_W = 160
 NODE_H = 56
 LEVEL_PAD = 80
@@ -166,24 +182,15 @@ class TopologyDiagram(Gtk.DrawingArea):
             cr.arc(x + w - 14, y + 14, 5, 0, 2 * 3.14159)
             cr.fill()
 
-        # connectivity test status dot (bottom-left)
+        # connectivity test / connection status dot (bottom-left)
         if dev.kind == "tunnel":
-            status = self._tunnel_status.get(dev.id)
+            dot = tunnel_dot(self._tunnel_status.get(dev.id))
             sx, sy = x + 14, y + h - 14
-            if status == "testing":
-                cr.set_source_rgb(0.95, 0.65, 0.10)   # amber
-                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
-                cr.fill()
-            elif status == "ok":
-                cr.set_source_rgb(0.45, 0.75, 0.35)   # green
-                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
-                cr.fill()
-            elif status == "fail":
-                cr.set_source_rgb(0.85, 0.35, 0.32)   # red
-                cr.arc(sx, sy, 5, 0, 2 * 3.14159)
+            if dot is not None:
+                cr.set_source_rgb(*dot[:3])
+                cr.arc(sx, sy, dot[3], 0, 2 * 3.14159)
                 cr.fill()
             else:
-                # never tested: faint outline
                 cr.set_source_rgba(0.45, 0.48, 0.55, 0.5)
                 cr.arc(sx, sy, 4, 0, 2 * 3.14159)
                 cr.set_line_width(1.0)
