@@ -12,10 +12,11 @@ from .topology_diagram import TopologyDiagram
 class TopologyView(Gtk.Box):
     """Renders a Topology as a horizontal tree diagram."""
 
-    def __init__(self, on_scan=None, on_add_tunnel=None):
+    def __init__(self, on_scan=None, on_add_tunnel=None, on_context_menu=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_scan = on_scan
         self._on_add_tunnel = on_add_tunnel
+        self._on_context_menu = on_context_menu
 
         self._host_label = Gtk.Label(halign=Gtk.Align.START, wrap=True)
         self._host_label.add_css_class("title-3")
@@ -24,7 +25,7 @@ class TopologyView(Gtk.Box):
         scroller = Gtk.ScrolledWindow()
         scroller.set_hexpand(True)
         scroller.set_vexpand(True)
-        self._diagram = TopologyDiagram()
+        self._diagram = TopologyDiagram(on_context_menu=on_context_menu)
         scroller.set_child(self._diagram)
         self.append(scroller)
 
