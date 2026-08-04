@@ -318,3 +318,12 @@ def test_failed_node_can_be_reconnected():
     results = mgr.connect(dev, topo=topo, profiles=[])
     assert results[-1][1] is True
     assert len(calls) == 2  # a fresh process was spawned
+
+
+def test_status_openvpn_activating_is_connecting():
+    calls, popen = _fake_popen(poll_value=None)
+    mgr = tunnels.TunnelManager(popen=popen, is_active=lambda p: "activating")
+    ovpn = Device(id="manual:v", kind="tunnel", label="v", parent_id="pc",
+                  manual=True, protocol="OpenVPN", profile="work")
+    mgr.connect(ovpn, topo=_topo_with(ovpn), profiles=["work"])
+    assert mgr.status("manual:v")[0] == "connecting"

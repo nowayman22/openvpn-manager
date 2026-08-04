@@ -131,6 +131,10 @@ class TunnelManager:
 
     All side effects flow through injectable seams (popen, is_active,
     connect_argv, disconnect_argv) so tests never touch the real system.
+
+    All connect/disconnect/status calls happen on the GTK main thread; the
+    lock only serializes stderr-reader-thread writes against them. Do not
+    call these from worker threads concurrently.
     """
 
     def __init__(self, *, popen=subprocess.Popen,
