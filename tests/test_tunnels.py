@@ -305,3 +305,16 @@ def test_clear_terminates_all_ssh_procs():
     mgr.clear()
     assert all(p.terminated for p in calls)
     assert mgr.ports_in_use() == set()
+
+
+def test_failed_node_can_be_reconnected():
+    calls, popen = _fake_popen(poll_value=None)
+    mgr = tunnels.TunnelManager(popen=popen, is_active=lambda p: "inactive")
+    topo = _simple_topo()
+    dev = next(d for d in topo.devices if d.id == "manual:a")
+    mgr.connect(dev, topo=topo, profiles=[])
+    calls[0]._poll = 255  # ssh process dies
+    assert mgr.status("manual:a")[0] == "failed"
+    results = mgr.connect(dev, topo=topo, profiles=[])
+    assert results[-1][1] is True
+    assert len(calls) == 2  # a fresh process was spawned

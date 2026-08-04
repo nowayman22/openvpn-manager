@@ -216,6 +216,16 @@ class TunnelManager:
             entry = dict(entry)
         if entry.get("stage") == "disconnected":
             return ("disconnected", None)
+        stage, message = self._derive_status(entry)
+        if stage != entry.get("stage"):
+            with self._lock:
+                cur = self._registry.get(device_id)
+                if cur is not None and cur.get("stage") != "disconnected":
+                    cur["stage"] = stage
+        return (stage, message)
+
+    def _derive_status(self, entry):
+        """(stage, message) computed purely from live state in entry."""
         if entry["kind"] == "ssh":
             proc = entry.get("proc")
             if proc is None:
