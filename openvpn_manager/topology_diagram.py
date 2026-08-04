@@ -28,8 +28,9 @@ CORNER_RADIUS = 10
 class TopologyDiagram(Gtk.DrawingArea):
     """Cairo-drawn horizontal tree diagram."""
 
-    def __init__(self):
+    def __init__(self, on_context_menu=None):
         super().__init__()
+        self._on_context_menu = on_context_menu
         self._topo = None
         self._boxes = []
         self._hover_id = None
@@ -174,12 +175,18 @@ class TopologyDiagram(Gtk.DrawingArea):
             self._hover_id = hit
             self.queue_draw()
 
-    def _on_click(self, _gesture, _n_press, x, y):
+    def _on_click(self, gesture, _n_press, x, y):
+        hit = None
         for b in self._boxes:
             if b.x <= x <= b.x + b.w and b.y <= y <= b.y + b.h:
-                self._hover_id = b.device_id
-                self.queue_draw()
-                return b.device_id
-        self._hover_id = None
+                hit = b.device_id
+                break
+        if gesture.get_current_button() == Gdk.BUTTON_SECONDARY:
+            if hit and self._on_context_menu and self._topo:
+                dev = next((d for d in self._topo.devices
+                            if d.id == hit), None)
+                if dev is not None:
+                    self._on_context_menu(dev, x, y)
+            return
+        self._hover_id = hit
         self.queue_draw()
-        return None
