@@ -469,3 +469,37 @@ def test_test_tunnel_empty_remote():
     status, msg = topology.test_tunnel("", "SSH")
     assert status == "fail"
     assert "no remote" in msg
+
+
+def test_save_and_load_manual_tunnels_with_new_fields(tmp_path):
+    dev = Device(id="manual:x", kind="tunnel", label="edge",
+                 parent_id="pc", manual=True, protocol="OpenVPN",
+                 detail="vpn.example", profile="work", user="alice", port=1080)
+    topology.save_manual_tunnels([dev], tmp_path / "t.toml")
+    loaded = topology.load_manual_tunnels(tmp_path / "t.toml")
+    assert len(loaded) == 1
+    assert loaded[0].profile == "work"
+    assert loaded[0].user == "alice"
+    assert loaded[0].port == 1080
+
+
+def test_load_manual_tunnels_without_new_fields(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text(
+        '[[tunnels]]\nid = "manual:x"\nlabel = "a"\nparent_id = "pc"\n'
+        'remote = "10.0.0.1"\nprotocol = "SSH"\n')
+    loaded = topology.load_manual_tunnels(p)
+    assert loaded[0].profile is None
+    assert loaded[0].user is None
+    assert loaded[0].port is None
+
+
+def test_update_manual_tunnel_new_fields():
+    dev = Device(id="manual:x", kind="tunnel", label="a", parent_id="pc",
+                 manual=True, protocol="SSH", detail="h")
+    out = topology.update_manual_tunnel(
+        [dev], "manual:x", label="b", parent_id="pc", remote="h2",
+        protocol="OpenVPN", profile="work", user="bob", port=1090)
+    assert out[0].profile == "work"
+    assert out[0].user == "bob"
+    assert out[0].port == 1090

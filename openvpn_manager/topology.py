@@ -27,6 +27,9 @@ class Device:
     parent_id: str | None = None
     manual: bool = False
     protocol: str | None = None     # "SSH" | "WireGuard" | "OpenVPN" | "Other"
+    profile: str | None = None      # imported OpenVPN profile bound to this tunnel
+    user: str | None = None         # SSH username; defaults to current user
+    port: int | None = None         # fixed local SOCKS port; None = auto-assign
 
     def __post_init__(self):
         if self.id is None:
@@ -457,6 +460,9 @@ def load_manual_tunnels(path=None):
             manual=True,
             protocol=entry.get("protocol"),
             detail=entry.get("remote"),
+            profile=entry.get("profile"),
+            user=entry.get("user"),
+            port=entry.get("port"),
         )
         result.append(dev)
     return result
@@ -480,6 +486,9 @@ def save_manual_tunnels(devices, path=None):
             "parent_id": dev.parent_id or "pc",
             "remote": dev.detail,
             "protocol": dev.protocol,
+            "profile": dev.profile,
+            "user": dev.user,
+            "port": dev.port,
         })
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -562,7 +571,7 @@ def delete_manual_tunnel(tunnels, tunnel_id):
 
 
 def update_manual_tunnel(tunnels, tunnel_id, *, label, parent_id, remote,
-                         protocol):
+                         protocol, profile=None, user=None, port=None):
     """Replace the matching manual tunnel's editable fields in place.
 
     The tunnel's id and manual flag are preserved. Missing id returns the
@@ -574,6 +583,9 @@ def update_manual_tunnel(tunnels, tunnel_id, *, label, parent_id, remote,
             t.parent_id = parent_id
             t.protocol = protocol
             t.detail = remote
+            t.profile = profile
+            t.user = user
+            t.port = port
     return tunnels
 
 
