@@ -39,3 +39,76 @@ def next_free_port(used: set[int], start: int = 1080) -> int:
     while port in used:
         port += 1
     return port
+
+
+def resolve_chain(topo, device_id):
+    """Ancestors of device_id, nearest to the pc first, excluding the target.
+
+    The pc root is excluded (it is the local machine, never a hop), so a
+    direct pc-attached tunnel yields [].
+    """
+    by_id = {d.id: d for d in topo.devices}
+    chain = []
+    cur = by_id.get(device_id)
+    seen = set()
+    while cur is not None:
+        parent = by_id.get(cur.parent_id)
+        if parent is None or parent.id == "pc" or parent.id in seen:
+            break
+        chain.append(parent)
+        seen.add(parent.id)
+        cur = parent
+    return list(reversed(chain))
+
+
+def nearest_socks_ancestor(topo, device_id, connections):
+    """SOCKS port of the closest connected SSH ancestor, or None.
+
+    connections maps device_id -> registry entry dicts (see TunnelManager).
+    """
+    for ancestor in reversed(resolve_chain(topo, device_id)):
+        entry = connections.get(ancestor.id)
+        if (entry and entry.get("kind") == "ssh"
+                and entry.get("stage") in ("connecting", "connected")
+                and entry.get("port")):
+            return entry["port"]
+    return None
+
+
+def is_connectable(device, profiles):
+    """True if this tunnel can be connected: SSH always; OpenVPN only when
+    bound to an imported profile; WireGuard/Other/pc never."""
+    if device.protocol == "SSH":
+        return True
+    if device.protocol == "OpenVPN":
+        return device.profile is not None and device.profile in profiles
+    return False
+
+
+def tree_descendants(devices, device_id):
+    """Every id reachable from device_id via parent links, DFS order.
+
+    Used for cascade disconnect across the whole tree (auto + manual).
+    """
+    children = {}
+    for d in devices:
+        pid = d.parent_id or "pc"
+        if pid == d.id:
+            continue
+        children.setdefault(pid, []).append(d.id)
+    out = []
+    stack = list(children.get(device_id, []))
+    while stack:
+        cid = stack.pop()
+        if cid in out:
+            continue
+        out.append(cid)
+        stack.extend(children.get(cid, []))
+    return out
+
+
+def dedupe_auto_tunnels(auto_tunnels, manual):
+    """Drop auto-discovered tunnels whose label matches a manual tunnel's
+    bound profile, so a connected manual OpenVPN node does not appear twice."""
+    bound = {m.profile for m in manual if m.profile}
+    return [t for t in auto_tunnels if t.label not in bound]
