@@ -4,6 +4,7 @@ import getpass
 import os
 import socket
 import subprocess
+import threading
 import time
 
 import gi
@@ -680,6 +681,15 @@ class Window(Adw.ApplicationWindow):
         popover.set_parent(self._topo_view._diagram)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
+        if device.kind == "tunnel":
+            test_btn = Gtk.Button(label="Test connectivity…")
+            test_btn.add_css_class("flat")
+            test_btn.set_halign(Gtk.Align.START)
+            test_btn.set_sensitive(bool(device.detail))
+            test_btn.connect("clicked", lambda *_: (
+                popover.popdown(), self._on_test_tunnel(device)))
+            box.append(test_btn)
+
         if device.manual:
             edit_btn = Gtk.Button(label="Edit…")
             edit_btn.add_css_class("flat")
@@ -738,6 +748,27 @@ class Window(Adw.ApplicationWindow):
 
         dialog.connect("response", on_response)
         dialog.present()
+
+    def _on_test_tunnel(self, device):
+        self._topo_view._diagram.set_tunnel_status(device.id, "testing")
+        self._toast.add_toast(
+            Adw.Toast.new(f"Testing tunnel '{device.label}'…"))
+
+        def work():
+            status, message = topology.test_tunnel(
+                device.detail, device.protocol)
+            GLib.idle_add(self._finish_tunnel_test, device, status, message)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _finish_tunnel_test(self, device, status, message):
+        self._topo_view._diagram.set_tunnel_status(device.id, status)
+        if status == "ok":
+            self._toast.add_toast(Adw.Toast.new(
+                f"Tunnel '{device.label}' reachable — {message}"))
+        else:
+            self._toast.add_toast(Adw.Toast.new(
+                f"Tunnel '{device.label}' no response — {message}"))
 
 
 class OpenVpnManagerApp(Adw.Application):
