@@ -20,6 +20,8 @@ from .format import human_bytes, human_duration, human_speed
 from .palette import load_palette, palette_to_css, sparkline_colors
 from .sparkline import Sparkline
 from .stats import Sampler, detect_iface
+from .topology import (Device, build_tree_topology, load_manual_tunnels,
+                        save_manual_tunnels)
 from .topology_view import TopologyView
 
 APP_ID = "dev.nikits.OpenVpnManager"
@@ -148,7 +150,8 @@ class Window(Adw.ApplicationWindow):
         self._stack = Adw.ViewStack()
         self._stack.add_titled(box, "status", "Status")
 
-        self._topo_view = TopologyView(on_scan=self._on_scan_requested)
+        self._topo_view = TopologyView(on_scan=self._on_scan_requested,
+                                       on_add_tunnel=self._on_add_tunnel)
         topo_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                             margin_top=12, margin_bottom=12,
                             margin_start=12, margin_end=12)
@@ -505,11 +508,12 @@ class Window(Adw.ApplicationWindow):
         ndisc_text = self._run_ip("ip", "-6", "neigh", "show")
         devices = topology.neighbors(arp_text, ndisc_text, own_ips=own)
         lan = topology.build_segment(gateway, cidr, devices)
-        tunnels = topology.connected_tunnels(
+        auto_tunnels = topology.connected_tunnels(
             self._profiles, topology.tun_ips(addr_text))
+        manual = load_manual_tunnels()
         hostname = socket.gethostname() or "This machine"
-        self._topo_view.set_topology(
-            topology.build_topology(hostname, own, lan, tunnels))
+        topo = build_tree_topology(hostname, own, lan, auto_tunnels, manual)
+        self._topo_view.set_topology(topo)
 
     @staticmethod
     def _read_proc(path):
@@ -526,6 +530,73 @@ class Window(Adw.ApplicationWindow):
             return cp.stdout or ""
         except OSError:
             return ""
+
+    def _on_add_tunnel(self):
+        devices = self._topo_view._diagram._topo.devices if (
+            self._topo_view._diagram._topo) else []
+        device_labels = [f"{d.label} ({d.ip or d.id})" for d in devices]
+        if not device_labels:
+            return
+
+        dialog = Adw.MessageDialog.new(
+            self, "Add Tunnel",
+            "Add a manual tunnel node to the topology tree.")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+        parent_combo = Adw.ComboRow(title="Connect from")
+        parent_combo.set_model(Gtk.StringList.new(device_labels))
+        parent_combo.set_selected(0)
+        body.append(parent_combo)
+
+        label_entry = Gtk.Entry(placeholder_text="Label (e.g. nested-ssh)")
+        body.append(label_entry)
+
+        remote_entry = Gtk.Entry(placeholder_text="Remote (hostname or IP)")
+        body.append(remote_entry)
+
+        proto_combo = Adw.ComboRow(title="Protocol")
+        proto_combo.set_model(Gtk.StringList.new(
+            ["SSH", "WireGuard", "OpenVPN", "Other"]))
+        proto_combo.set_selected(0)
+        body.append(proto_combo)
+
+        dialog.set_extra_child(body)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("add", "Add")
+        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("add")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response):
+            if response != "add":
+                return
+            label = label_entry.get_text().strip()
+            remote = remote_entry.get_text().strip()
+            if not label:
+                _d.set_body("Label is required.")
+                return
+            if not remote:
+                _d.set_body("Remote is required.")
+                return
+            parent_idx = parent_combo.get_selected()
+            parent_id = (devices[parent_idx].id
+                         if 0 <= parent_idx < len(devices) else "pc")
+            proto_model = proto_combo.get_model()
+            proto = proto_model.get_string(proto_combo.get_selected()) if (
+                proto_combo.get_selected() >= 0) else "SSH"
+            import uuid
+            new_tun = Device(
+                id=f"manual:{uuid.uuid4().hex[:8]}",
+                kind="tunnel", label=label, parent_id=parent_id,
+                manual=True, protocol=proto, detail=remote)
+            existing = load_manual_tunnels()
+            existing.append(new_tun)
+            save_manual_tunnels(existing)
+            self._refresh_topology()
+            self._toast.add_toast(Adw.Toast.new(f"Tunnel '{label}' added"))
+
+        dialog.connect("response", on_response)
+        dialog.present()
 
 
 class OpenVpnManagerApp(Adw.Application):
