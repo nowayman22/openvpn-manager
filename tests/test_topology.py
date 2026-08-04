@@ -397,3 +397,75 @@ def test_descendant_ids_cycle_terminates():
         Device(id="manual:b", kind="tunnel", label="b", parent_id="manual:a", manual=True),
     ]
     assert topology.descendant_ids(tunnels, "manual:a") == {"manual:b"}
+
+
+class _FakeSocket:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _tcp_raises(msg):
+    def raiser(*_args, **_kwargs):
+        raise OSError(msg)
+    return raiser
+
+
+def _ping_runner(retcode, stdout="", stderr=""):
+    def runner(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], retcode,
+                                           stdout=stdout, stderr=stderr)
+    return runner
+
+
+def test_test_tunnel_tcp_connect_success():
+    sock = _FakeSocket()
+    status, msg = topology.test_tunnel(
+        "10.8.0.9", "SSH", connect=lambda *a, **k: sock)
+    assert status == "ok"
+    assert "TCP 10.8.0.9:22" in msg
+    assert sock.closed
+
+
+def test_test_tunnel_tcp_fails_ping_succeeds():
+    status, msg = topology.test_tunnel(
+        "10.8.0.9", "SSH", connect=_tcp_raises("timed out"),
+        ping_runner=_ping_runner(0, stdout=(
+            "64 bytes from 10.8.0.9: icmp_seq=1 ttl=64 time=0.3 ms\n"
+            "64 bytes from 10.8.0.9: icmp_seq=2 ttl=64 time=0.3 ms\n")))
+    assert status == "ok"
+    assert "2/2" in msg
+
+
+def test_test_tunnel_both_fail():
+    status, msg = topology.test_tunnel(
+        "10.8.0.9", "SSH", connect=_tcp_raises("timed out"),
+        ping_runner=_ping_runner(1, stderr="ping: destination unreachable"))
+    assert status == "fail"
+    assert "timed out" in msg
+
+
+def test_test_tunnel_no_port_uses_ping():
+    status, msg = topology.test_tunnel(
+        "10.8.0.9", None,
+        ping_runner=_ping_runner(0, stdout=(
+            "64 bytes from 10.8.0.9: icmp_seq=1 ttl=64 time=0.3 ms\n")))
+    assert status == "ok"
+    assert "ping" in msg
+
+
+def test_test_tunnel_unknown_protocol_falls_back_to_ping():
+    status, msg = topology.test_tunnel(
+        "example.com", "Quic",
+        ping_runner=_ping_runner(0, stdout=(
+            "64 bytes from example.com: icmp_seq=1 ttl=50 time=1.0 ms\n")))
+    assert status == "ok"
+    assert "1/2" in msg
+
+
+def test_test_tunnel_empty_remote():
+    status, msg = topology.test_tunnel("", "SSH")
+    assert status == "fail"
+    assert "no remote" in msg

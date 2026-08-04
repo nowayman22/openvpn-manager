@@ -4,6 +4,8 @@ All system reads go through injectable readers so this module is testable
 without touching the real network.
 """
 
+import socket
+import subprocess
 import tomllib
 import uuid
 from dataclasses import dataclass, field
@@ -593,3 +595,57 @@ def descendant_ids(tunnels, tunnel_id):
         result.add(cid)
         stack.extend(children.get(cid, []))
     return result
+
+
+_PROTO_PORTS = {"SSH": 22, "OpenVPN": 1194, "WireGuard": 51820, "Other": 443}
+
+
+def _ping_replies(stdout):
+    """Count ICMP reply lines in `ping -c` output."""
+    return sum(1 for line in stdout.splitlines() if "bytes from" in line)
+
+
+def _ping_reason(cp):
+    """Last non-empty error line from a failed ping, if any."""
+    for stream in (cp.stderr, cp.stdout):
+        if stream:
+            lines = [ln.strip() for ln in stream.splitlines() if ln.strip()]
+            if lines:
+                return lines[-1]
+    return None
+
+
+def test_tunnel(remote, protocol, *, timeout=3,
+                connect=socket.create_connection,
+                ping_runner=subprocess.run):
+    """Probe a tunnel's remote endpoint and report whether it responds.
+
+    Tries a TCP connect first when the protocol has a known port, then falls
+    back to a short ICMP ping (exit 0 means at least one reply arrived).
+    Returns (status, message) with status "ok" or "fail"; the message names
+    what succeeded or the last error. connect and ping_runner are injectable
+    so tests never touch the network.
+    """
+    if not remote:
+        return "fail", "no remote endpoint"
+
+    port = _PROTO_PORTS.get(protocol)
+    if port:
+        try:
+            sock = connect((remote, port), timeout)
+            sock.close()
+            return "ok", f"TCP {remote}:{port}"
+        except OSError as exc:
+            tcp_err = str(exc) or type(exc).__name__
+    else:
+        tcp_err = None
+
+    try:
+        cp = ping_runner(["ping", "-c", "2", "-W", "2", remote],
+                         capture_output=True, text=True)
+    except OSError as exc:
+        return "fail", f"ping failed: {exc}"
+    if cp.returncode == 0:
+        return "ok", f"ping {remote} ({_ping_replies(cp.stdout)}/2 replies)"
+    reason = tcp_err or _ping_reason(cp) or f"ping {remote}: no reply"
+    return "fail", reason
