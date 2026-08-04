@@ -25,6 +25,7 @@ from .topology import (Device, build_tree_topology, delete_manual_tunnel,
                        descendant_ids, load_manual_tunnels,
                        save_manual_tunnels, update_manual_tunnel)
 from .topology_view import TopologyView
+from . import tunnels as tunnel_backend
 
 APP_ID = "dev.nikits.OpenVpnManager"
 
@@ -517,6 +518,7 @@ class Window(Adw.ApplicationWindow):
         auto_tunnels = topology.connected_tunnels(
             self._profiles, topology.tun_ips(addr_text))
         manual = load_manual_tunnels()
+        auto_tunnels = tunnel_backend.dedupe_auto_tunnels(auto_tunnels, manual)
         hostname = socket.gethostname() or "This machine"
         topo = build_tree_topology(hostname, own, lan, auto_tunnels, manual)
         self._topo_view.set_topology(topo)
@@ -557,14 +559,12 @@ class Window(Adw.ApplicationWindow):
         # PreferencesGroup (a GtkListBox) or its popover cannot open.
         group = Adw.PreferencesGroup()
 
-        # Source picker (add mode only): Free-form or an imported .ovpn profile.
-        source_combo = None
-        if tunnel is None:
-            source_combo = Adw.ComboRow(title="Source")
-            source_combo.set_model(Gtk.StringList.new(
-                ["Free-form", *self._profiles]))
-            source_combo.set_selected(0)
-            group.add(source_combo)
+        # Source picker: Free-form or an imported .ovpn profile.
+        source_combo = Adw.ComboRow(title="Source")
+        source_combo.set_model(Gtk.StringList.new(
+            ["Free-form", *self._profiles]))
+        source_combo.set_selected(0)
+        group.add(source_combo)
 
         # Parent picker. In edit mode, exclude self and descendants.
         if tunnel is not None:
@@ -609,6 +609,29 @@ class Window(Adw.ApplicationWindow):
 
         body.append(group)
 
+        # SSH-only fields: username and optional fixed SOCKS port.
+        ssh_fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        user_entry = Gtk.Entry(placeholder_text="Username (SSH)")
+        default_user = tunnel.user if (tunnel is not None and tunnel.user) \
+            else getpass.getuser()
+        user_entry.set_text(default_user)
+        ssh_fields.append(user_entry)
+        port_entry = Gtk.Entry(placeholder_text="Local SOCKS port (optional)")
+        if tunnel is not None and tunnel.port is not None:
+            port_entry.set_text(str(tunnel.port))
+        ssh_fields.append(port_entry)
+        body.append(ssh_fields)
+
+        def refresh_ssh_fields():
+            proto_names_ = proto_names
+            ssh_fields.set_visible(
+                proto_combo.get_selected() >= 0
+                and proto_names_[proto_combo.get_selected()] == "SSH")
+
+        proto_combo.connect("notify::selected",
+                            lambda *_: refresh_ssh_fields())
+        refresh_ssh_fields()
+
         def on_source_changed(*_args):
             idx = source_combo.get_selected()
             if idx <= 0 or idx > len(self._profiles):
@@ -616,16 +639,18 @@ class Window(Adw.ApplicationWindow):
             profile = self._profiles[idx - 1]
             remote, _proto = vpn.parse_remote(
                 f"{vpn.CLIENT_DIR}/{profile}.conf")
-            label_entry.set_text(profile)
-            if remote:
+            if not label_entry.get_text().strip():
+                label_entry.set_text(profile)
+            if remote and not remote_entry.get_text().strip():
                 remote_entry.set_text(remote)
             proto_combo.set_selected(proto_names.index("OpenVPN"))
 
-        if source_combo is not None:
-            source_combo.connect("notify::selected", on_source_changed)
-            if source_profile is not None and source_profile in self._profiles:
-                source_combo.set_selected(1 + self._profiles.index(source_profile))
-                on_source_changed()
+        source_combo.connect("notify::selected", on_source_changed)
+        if tunnel is not None and tunnel.profile in self._profiles:
+            source_combo.set_selected(1 + self._profiles.index(tunnel.profile))
+        elif source_profile is not None and source_profile in self._profiles:
+            source_combo.set_selected(1 + self._profiles.index(source_profile))
+            on_source_changed()
 
         dialog.set_extra_child(body)
         dialog.add_response("cancel", "Cancel")
@@ -652,11 +677,26 @@ class Window(Adw.ApplicationWindow):
             proto_model = proto_combo.get_model()
             proto = proto_model.get_string(proto_combo.get_selected()) if (
                 proto_combo.get_selected() >= 0) else "SSH"
+            profile = None
+            src_idx = source_combo.get_selected()
+            if proto == "OpenVPN" and 0 < src_idx <= len(self._profiles):
+                profile = self._profiles[src_idx - 1]
+            user = None
+            port = None
+            if proto == "SSH":
+                user = user_entry.get_text().strip() or None
+                port_text = port_entry.get_text().strip()
+                if port_text:
+                    try:
+                        port = int(port_text)
+                    except ValueError:
+                        port = None  # invalid -> auto-assign at connect time
             existing = load_manual_tunnels()
             if tunnel is not None:
                 existing = update_manual_tunnel(
                     existing, tunnel.id, label=label, parent_id=parent_id_sel,
-                    remote=remote, protocol=proto)
+                    remote=remote, protocol=proto, profile=profile,
+                    user=user, port=port)
                 save_manual_tunnels(existing)
                 self._refresh_topology()
                 self._toast.add_toast(
@@ -666,7 +706,8 @@ class Window(Adw.ApplicationWindow):
                 new_tun = Device(
                     id=f"manual:{uuid.uuid4().hex[:8]}",
                     kind="tunnel", label=label, parent_id=parent_id_sel,
-                    manual=True, protocol=proto, detail=remote)
+                    manual=True, protocol=proto, detail=remote,
+                    profile=profile, user=user, port=port)
                 existing.append(new_tun)
                 save_manual_tunnels(existing)
                 self._refresh_topology()
