@@ -47,6 +47,8 @@ class Window(Adw.ApplicationWindow):
             sparkline_colors(self._palette) if self._palette else (None, None))
         if self._palette is not None:
             self._apply_theme_css(self._palette)
+        self._tunnels = tunnel_backend.TunnelManager()
+        self.connect("close-request", self._on_close_request)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
@@ -284,7 +286,7 @@ class Window(Adw.ApplicationWindow):
                     success_msg=f"Connected {profile}",
                     fail_prefix=f"Failed to connect {profile}")
 
-    def _prompt_credentials(self, profile):
+    def _prompt_credentials(self, profile, on_done=None):
         dialog = Adw.MessageDialog.new(
             self, "Credentials required",
             f"Profile '{profile}' uses username/password authentication.")
@@ -303,12 +305,14 @@ class Window(Adw.ApplicationWindow):
         def on_response(_d, response):
             if response == "connect":
                 self._save_creds_and_connect(
-                    profile, user_entry.get_text(), pass_entry.get_text())
+                    profile, user_entry.get_text(), pass_entry.get_text(),
+                    on_done=on_done)
 
         dialog.connect("response", on_response)
         dialog.present()
 
-    def _save_creds_and_connect(self, profile, username, password):
+    def _save_creds_and_connect(self, profile, username, password,
+                                on_done=None):
         if not username or not password:
             self._report(False, "Credentials required",
                          "username and password must not be empty")
@@ -318,7 +322,7 @@ class Window(Adw.ApplicationWindow):
                     success_msg=f"Credentials saved for {profile}",
                     fail_prefix=f"Saving credentials for {profile} failed",
                     stdin_text=f"{username}\n{password}\n",
-                    on_done=lambda: self._connect(profile))
+                    on_done=on_done or (lambda: self._connect(profile)))
 
     def _on_import(self, _action, _param):
         self._open_import()
@@ -396,6 +400,7 @@ class Window(Adw.ApplicationWindow):
 
     def _tick(self):
         try:
+            self._paint_tunnel_connections()
             profile = self._selected_profile()
             if not profile:
                 return True
@@ -416,6 +421,20 @@ class Window(Adw.ApplicationWindow):
         except Exception:
             pass  # keep the timer alive; skip this tick on transient errors
         return True
+
+    def _paint_tunnel_connections(self):
+        diagram = self._topo_view._diagram
+        topo = diagram._topo
+        if topo is None:
+            return
+        for dev in topo.devices:
+            if dev.kind == "tunnel" and dev.manual:
+                stage, _msg = self._tunnels.status(dev.id)
+                diagram.set_tunnel_status(dev.id, stage)
+
+    def _on_close_request(self, *_args):
+        self._tunnels.clear()
+        return False  # allow the window to close
 
     def _update_usage(self, profile):
         iface = detect_iface()
@@ -723,6 +742,28 @@ class Window(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         if device.kind == "tunnel":
+            if tunnel_backend.is_connectable(device, self._profiles):
+                stage, _msg = self._tunnels.status(device.id)
+                label = ("Disconnect" if stage in ("connected", "connecting")
+                         else "Connect…")
+                conn_btn = Gtk.Button(label=label)
+                conn_btn.add_css_class("flat")
+                conn_btn.set_halign(Gtk.Align.START)
+                if stage in ("connected", "connecting"):
+                    conn_btn.connect("clicked", lambda *_: (
+                        popover.popdown(), self._on_disconnect_tunnel(device)))
+                else:
+                    conn_btn.connect("clicked", lambda *_: (
+                        popover.popdown(), self._on_connect_tunnel(device)))
+                box.append(conn_btn)
+            elif device.manual:
+                disabled = Gtk.Button(label="Connect…")
+                disabled.add_css_class("flat")
+                disabled.set_halign(Gtk.Align.START)
+                disabled.set_sensitive(False)
+                disabled.set_tooltip_text(
+                    "Connect is not supported for this tunnel type.")
+                box.append(disabled)
             test_btn = Gtk.Button(label="Test connectivity…")
             test_btn.add_css_class("flat")
             test_btn.set_halign(Gtk.Align.START)
@@ -801,6 +842,49 @@ class Window(Adw.ApplicationWindow):
             GLib.idle_add(self._finish_tunnel_test, device, status, message)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_connect_tunnel(self, device):
+        if device.protocol == "OpenVPN" and device.profile:
+            conf = f"{vpn.CLIENT_DIR}/{device.profile}.conf"
+            if vpn.needs_credentials(conf):
+                self._prompt_credentials(
+                    device.profile,
+                    on_done=lambda: self._on_connect_tunnel(device))
+                return
+        topo = self._topo_view._diagram._topo
+        if topo is None:
+            return
+        results = self._tunnels.connect(
+            device, topo=topo, profiles=self._profiles)
+        self._finish_tunnel_connect(results)
+
+    def _finish_tunnel_connect(self, results):
+        self._refresh_topology()
+        for device_id, ok, msg in results:
+            if msg == "skipped":
+                continue
+            toast = Adw.Toast.new(
+                f"{self._tunnel_label(device_id)}: {msg}")
+            if not ok:
+                toast.set_timeout(4)
+            self._toast.add_toast(toast)
+
+    def _on_disconnect_tunnel(self, device):
+        topo = self._topo_view._diagram._topo
+        if topo is None:
+            return
+        self._tunnels.disconnect(device.id, topo=topo)
+        self._refresh_topology()
+        self._toast.add_toast(
+            Adw.Toast.new(f"Disconnected '{device.label}'"))
+
+    def _tunnel_label(self, device_id):
+        topo = self._topo_view._diagram._topo
+        if topo:
+            for d in topo.devices:
+                if d.id == device_id:
+                    return d.label
+        return device_id
 
     def _finish_tunnel_test(self, device, status, message):
         self._topo_view._diagram.set_tunnel_status(device.id, status)
