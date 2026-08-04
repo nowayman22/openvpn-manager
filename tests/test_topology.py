@@ -3,7 +3,7 @@ import textwrap
 import tomllib
 
 from openvpn_manager import topology
-from openvpn_manager.topology import Device, Edge, Segment, build_topology
+from openvpn_manager.topology import Device, Edge, Segment, Topology, build_topology
 
 
 ROUTE = textwrap.dedent("""\
@@ -290,3 +290,34 @@ def test_load_manual_tunnels_malformed(tmp_path):
     path = tmp_path / "topology.toml"
     path.write_text("not valid toml at all [[[")
     assert topology.load_manual_tunnels(path) == []
+
+
+def test_compute_layout_positions():
+    root = Device(id="pc", kind="pc", label="host")
+    child = Device(id="tun:a", kind="tunnel", label="a", parent_id="pc")
+    topo = Topology(hostname="host", root=root,
+                    devices=[root, child],
+                    edges=[Edge(source_id="pc", target_id="tun:a", style="dashed")])
+    boxes = topology.compute_layout(topo, col_width=140, node_pad=12, level_pad=60)
+    by_id = {b.device_id: b for b in boxes}
+    assert len(boxes) == 2
+    assert by_id["pc"].x == 0
+    assert by_id["tun:a"].x == 200  # col_width + level_pad
+    # Both nodes have valid, non-negative y
+    assert by_id["pc"].y >= 0
+    assert by_id["tun:a"].y >= 0
+
+
+def test_compute_layout_sibling_spacing():
+    root = Device(id="pc", kind="pc", label="host")
+    a = Device(id="tun:a", kind="tunnel", label="a", parent_id="pc")
+    b = Device(id="tun:b", kind="tunnel", label="b", parent_id="pc")
+    topo = Topology(hostname="host", root=root,
+                    devices=[root, a, b],
+                    edges=[Edge(source_id="pc", target_id="tun:a", style="dashed"),
+                           Edge(source_id="pc", target_id="tun:b", style="dashed")])
+    boxes = topology.compute_layout(topo)
+    by_id = {b.device_id: b for b in boxes}
+    # siblings have same x, different y
+    assert by_id["tun:a"].x == by_id["tun:b"].x
+    assert abs(by_id["tun:a"].y - by_id["tun:b"].y) > 0

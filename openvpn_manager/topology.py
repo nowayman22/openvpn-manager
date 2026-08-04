@@ -412,6 +412,16 @@ def build_tree_topology(hostname, local_ips, lan, auto_tunnels,
                     lan=lan, tunnels=list(auto_tunnels))
 
 
+@dataclass
+class NodeBox:
+    """A device's bounding box in the layout."""
+    device_id: str
+    x: float
+    y: float
+    w: float
+    h: float
+
+
 _MANUAL_CONFIG_PATH = Path.home() / ".config" / "openvpn-manager" / "topology.toml"
 
 
@@ -478,3 +488,48 @@ def save_manual_tunnels(devices, path=None):
                 if val is not None:
                     fh.write(f"{key} = {val!r}\n")
             fh.write("\n")
+
+
+def compute_layout(topo, col_width=160, node_pad=12, level_pad=80):
+    """Compute bounding boxes for every device in a left-to-right tree layout.
+
+    Devices are positioned by tree depth (column): root at x=0, children at
+    x = parent.x + col_width + level_pad. Same-depth siblings are stacked
+    vertically. The parent is vertically centered across its children.
+
+    Returns a list of NodeBox, one per device in topo.devices.
+    """
+    children = {}
+    for d in topo.devices:
+        pid = d.parent_id or "pc"
+        if pid == d.id:
+            continue
+        children.setdefault(pid, []).append(d)
+
+    boxes = {}
+
+    def layout_subtree(device, x):
+        subs = children.get(device.id, [])
+        if not subs:
+            node_y = 0.0
+            for b in boxes.values():
+                node_y = max(node_y, b.y + b.h + node_pad)
+            boxes[device.id] = NodeBox(device.id, x, node_y, col_width, 56)
+            return
+
+        for child in subs:
+            layout_subtree(child, x + col_width + level_pad)
+
+        child_boxes = [boxes[ch.id] for ch in subs if ch.id in boxes]
+        if child_boxes:
+            top = min(b.y for b in child_boxes)
+            bottom = max(b.y + b.h for b in child_boxes)
+            center_y = (top + bottom) / 2
+            boxes[device.id] = NodeBox(device.id, x, center_y - 28, col_width, 56)
+        else:
+            boxes[device.id] = NodeBox(device.id, x, 0.0, col_width, 56)
+
+    if topo.root:
+        layout_subtree(topo.root, 0)
+
+    return sorted(boxes.values(), key=lambda b: (b.x, b.y))
