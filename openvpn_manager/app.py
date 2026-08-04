@@ -552,6 +552,10 @@ class Window(Adw.ApplicationWindow):
             "Add a manual tunnel node to the topology tree.")
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
+        # Adw.ComboRow is a PreferencesRow and must live in a
+        # PreferencesGroup (a GtkListBox) or its popover cannot open.
+        group = Adw.PreferencesGroup()
+
         # Source picker (add mode only): Free-form or an imported .ovpn profile.
         source_combo = None
         if tunnel is None:
@@ -559,7 +563,7 @@ class Window(Adw.ApplicationWindow):
             source_combo.set_model(Gtk.StringList.new(
                 ["Free-form", *self._profiles]))
             source_combo.set_selected(0)
-            body.append(source_combo)
+            group.add(source_combo)
 
         # Parent picker. In edit mode, exclude self and descendants.
         if tunnel is not None:
@@ -579,7 +583,7 @@ class Window(Adw.ApplicationWindow):
                     break
         else:
             parent_combo.set_selected(0)
-        body.append(parent_combo)
+        group.add(parent_combo)
 
         label_entry = Gtk.Entry(placeholder_text="Label (e.g. nested-ssh)")
         if tunnel is not None:
@@ -600,7 +604,9 @@ class Window(Adw.ApplicationWindow):
             proto_combo.set_selected(idx)
         else:
             proto_combo.set_selected(0)
-        body.append(proto_combo)
+        group.add(proto_combo)
+
+        body.append(group)
 
         def on_source_changed(*_args):
             idx = source_combo.get_selected()
