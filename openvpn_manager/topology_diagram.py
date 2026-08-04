@@ -42,6 +42,7 @@ class TopologyDiagram(Gtk.DrawingArea):
         motion.connect("motion", self._on_motion)
         self.add_controller(motion)
         click = Gtk.GestureClick.new()
+        click.set_button(0)  # 0 = any button; default 1 ignores right-click
         click.connect("pressed", self._on_click)
         self.add_controller(click)
 
