@@ -681,16 +681,22 @@ class Window(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         if device.manual:
-            edit_btn = Gtk.ModelButton(label="Edit…")
+            edit_btn = Gtk.Button(label="Edit…")
+            edit_btn.add_css_class("flat")
+            edit_btn.set_halign(Gtk.Align.START)
             edit_btn.connect("clicked", lambda *_: (
                 popover.popdown(), self._on_edit_tunnel(device)))
             box.append(edit_btn)
-            delete_btn = Gtk.ModelButton(label="Delete…")
+            delete_btn = Gtk.Button(label="Delete…")
+            delete_btn.add_css_class("flat")
+            delete_btn.set_halign(Gtk.Align.START)
             delete_btn.connect("clicked", lambda *_: (
                 popover.popdown(), self._on_delete_tunnel(device)))
             box.append(delete_btn)
 
-        add_child_btn = Gtk.ModelButton(label="Add child tunnel…")
+        add_child_btn = Gtk.Button(label="Add child tunnel…")
+        add_child_btn.add_css_class("flat")
+        add_child_btn.set_halign(Gtk.Align.START)
         add_child_btn.connect("clicked", lambda *_: (
             popover.popdown(), self._on_add_tunnel(parent_id=device.id)))
         box.append(add_child_btn)
