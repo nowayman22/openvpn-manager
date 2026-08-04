@@ -391,23 +391,26 @@ class Window(Adw.ApplicationWindow):
             self._action_btn.add_css_class(style)
 
     def _tick(self):
-        profile = self._selected_profile()
-        if not profile:
-            return True
-        state = vpn.is_active(profile)
-        if state == "active":
-            self._set_status_pill("Connected", True)
-            self._set_action_button("Disconnect", "destructive-action", True)
-            self._update_usage(profile)
-        elif state == "activating":
-            self._set_status_pill("Connecting", False)
-            self._set_action_button("Connecting…", None, False)
-        else:
-            self._set_status_pill("Disconnected", False)
-            self._set_action_button("Connect", "suggested-action", True)
-            self._sampler = None
-            self._iface = None
-        self._maybe_refresh_topology()
+        try:
+            profile = self._selected_profile()
+            if not profile:
+                return True
+            state = vpn.is_active(profile)
+            if state == "active":
+                self._set_status_pill("Connected", True)
+                self._set_action_button("Disconnect", "destructive-action", True)
+                self._update_usage(profile)
+            elif state == "activating":
+                self._set_status_pill("Connecting", False)
+                self._set_action_button("Connecting…", None, False)
+            else:
+                self._set_status_pill("Disconnected", False)
+                self._set_action_button("Connect", "suggested-action", True)
+                self._sampler = None
+                self._iface = None
+            self._maybe_refresh_topology()
+        except Exception:
+            pass  # keep the timer alive; skip this tick on transient errors
         return True
 
     def _update_usage(self, profile):
@@ -481,8 +484,8 @@ class Window(Adw.ApplicationWindow):
     def _spawn_quiet(self, argv, on_done=None):
         try:
             proc = Gio.Subprocess.new(
-                argv, Gio.SubprocessFlags.STDOUT_DEVNULL |
-                Gio.SubprocessFlags.STDERR_DEVNULL)
+                argv, Gio.SubprocessFlags.STDOUT_SILENCE |
+                Gio.SubprocessFlags.STDERR_SILENCE)
         except GLib.Error:
             if on_done:
                 on_done()
