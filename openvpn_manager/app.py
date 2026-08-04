@@ -20,8 +20,9 @@ from .format import human_bytes, human_duration, human_speed
 from .palette import load_palette, palette_to_css, sparkline_colors
 from .sparkline import Sparkline
 from .stats import Sampler, detect_iface
-from .topology import (Device, build_tree_topology, load_manual_tunnels,
-                        save_manual_tunnels)
+from .topology import (Device, build_tree_topology, delete_manual_tunnel,
+                       descendant_ids, load_manual_tunnels,
+                       save_manual_tunnels, update_manual_tunnel)
 from .topology_view import TopologyView
 
 APP_ID = "dev.nikits.OpenVpnManager"
@@ -151,7 +152,8 @@ class Window(Adw.ApplicationWindow):
         self._stack.add_titled(box, "status", "Status")
 
         self._topo_view = TopologyView(on_scan=self._on_scan_requested,
-                                       on_add_tunnel=self._on_add_tunnel)
+                                       on_add_tunnel=self._on_add_tunnel,
+                                       on_context_menu=self._on_node_context)
         topo_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                             margin_top=12, margin_bottom=12,
                             margin_start=12, margin_end=12)
@@ -534,38 +536,93 @@ class Window(Adw.ApplicationWindow):
         except OSError:
             return ""
 
-    def _on_add_tunnel(self):
+    def _on_add_tunnel(self, parent_id=None):
+        dialog = self._tunnel_dialog(parent_id=parent_id)
+        if dialog is not None:
+            dialog.present()
+
+    def _tunnel_dialog(self, parent_id=None, source_profile=None, tunnel=None):
         devices = self._topo_view._diagram._topo.devices if (
             self._topo_view._diagram._topo) else []
-        device_labels = [f"{d.label} ({d.ip or d.id})" for d in devices]
-        if not device_labels:
-            return
+        if not devices:
+            return None
 
         dialog = Adw.MessageDialog.new(
-            self, "Add Tunnel",
+            self, "Edit Tunnel" if tunnel else "Add Tunnel",
             "Add a manual tunnel node to the topology tree.")
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
+        # Source picker (add mode only): Free-form or an imported .ovpn profile.
+        source_combo = None
+        if tunnel is None:
+            source_combo = Adw.ComboRow(title="Source")
+            source_combo.set_model(Gtk.StringList.new(
+                ["Free-form", *self._profiles]))
+            source_combo.set_selected(0)
+            body.append(source_combo)
+
+        # Parent picker. In edit mode, exclude self and descendants.
+        if tunnel is not None:
+            excluded = descendant_ids(load_manual_tunnels(),
+                                      tunnel.id) | {tunnel.id}
+            parent_devices = [d for d in devices if d.id not in excluded]
+        else:
+            parent_devices = list(devices)
+        parent_labels = [f"{d.label} ({d.ip or d.id})"
+                         for d in parent_devices]
         parent_combo = Adw.ComboRow(title="Connect from")
-        parent_combo.set_model(Gtk.StringList.new(device_labels))
-        parent_combo.set_selected(0)
+        parent_combo.set_model(Gtk.StringList.new(parent_labels))
+        if parent_id is not None:
+            for i, d in enumerate(parent_devices):
+                if d.id == parent_id:
+                    parent_combo.set_selected(i)
+                    break
+        else:
+            parent_combo.set_selected(0)
         body.append(parent_combo)
 
         label_entry = Gtk.Entry(placeholder_text="Label (e.g. nested-ssh)")
+        if tunnel is not None:
+            label_entry.set_text(tunnel.label)
         body.append(label_entry)
 
         remote_entry = Gtk.Entry(placeholder_text="Remote (hostname or IP)")
+        if tunnel is not None:
+            remote_entry.set_text(tunnel.detail or "")
         body.append(remote_entry)
 
+        proto_names = ["SSH", "WireGuard", "OpenVPN", "Other"]
         proto_combo = Adw.ComboRow(title="Protocol")
-        proto_combo.set_model(Gtk.StringList.new(
-            ["SSH", "WireGuard", "OpenVPN", "Other"]))
-        proto_combo.set_selected(0)
+        proto_combo.set_model(Gtk.StringList.new(proto_names))
+        if tunnel is not None:
+            idx = (proto_names.index(tunnel.protocol)
+                   if tunnel.protocol in proto_names else 0)
+            proto_combo.set_selected(idx)
+        else:
+            proto_combo.set_selected(0)
         body.append(proto_combo)
+
+        def on_source_changed(*_args):
+            idx = source_combo.get_selected()
+            if idx <= 0 or idx > len(self._profiles):
+                return
+            profile = self._profiles[idx - 1]
+            remote, _proto = vpn.parse_remote(
+                f"{vpn.CLIENT_DIR}/{profile}.conf")
+            label_entry.set_text(profile)
+            if remote:
+                remote_entry.set_text(remote)
+            proto_combo.set_selected(proto_names.index("OpenVPN"))
+
+        if source_combo is not None:
+            source_combo.connect("notify::selected", on_source_changed)
+            if source_profile is not None and source_profile in self._profiles:
+                source_combo.set_selected(1 + self._profiles.index(source_profile))
+                on_source_changed()
 
         dialog.set_extra_child(body)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("add", "Add")
+        dialog.add_response("add", "Save" if tunnel else "Add")
         dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("add")
         dialog.set_close_response("cancel")
@@ -582,21 +639,90 @@ class Window(Adw.ApplicationWindow):
                 _d.set_body("Remote is required.")
                 return
             parent_idx = parent_combo.get_selected()
-            parent_id = (devices[parent_idx].id
-                         if 0 <= parent_idx < len(devices) else "pc")
+            parent_id_sel = (parent_devices[parent_idx].id
+                             if 0 <= parent_idx < len(parent_devices)
+                             else "pc")
             proto_model = proto_combo.get_model()
             proto = proto_model.get_string(proto_combo.get_selected()) if (
                 proto_combo.get_selected() >= 0) else "SSH"
-            import uuid
-            new_tun = Device(
-                id=f"manual:{uuid.uuid4().hex[:8]}",
-                kind="tunnel", label=label, parent_id=parent_id,
-                manual=True, protocol=proto, detail=remote)
             existing = load_manual_tunnels()
-            existing.append(new_tun)
-            save_manual_tunnels(existing)
+            if tunnel is not None:
+                existing = update_manual_tunnel(
+                    existing, tunnel.id, label=label, parent_id=parent_id_sel,
+                    remote=remote, protocol=proto)
+                save_manual_tunnels(existing)
+                self._refresh_topology()
+                self._toast.add_toast(
+                    Adw.Toast.new(f"Tunnel '{label}' updated"))
+            else:
+                import uuid
+                new_tun = Device(
+                    id=f"manual:{uuid.uuid4().hex[:8]}",
+                    kind="tunnel", label=label, parent_id=parent_id_sel,
+                    manual=True, protocol=proto, detail=remote)
+                existing.append(new_tun)
+                save_manual_tunnels(existing)
+                self._refresh_topology()
+                self._toast.add_toast(
+                    Adw.Toast.new(f"Tunnel '{label}' added"))
+
+        dialog.connect("response", on_response)
+        return dialog
+
+    def _on_node_context(self, device, x, y):
+        popover = Gtk.Popover()
+        popover.set_parent(self._topo_view._diagram)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        if device.manual:
+            edit_btn = Gtk.ModelButton(label="Edit…")
+            edit_btn.connect("clicked", lambda *_: (
+                popover.popdown(), self._on_edit_tunnel(device)))
+            box.append(edit_btn)
+            delete_btn = Gtk.ModelButton(label="Delete…")
+            delete_btn.connect("clicked", lambda *_: (
+                popover.popdown(), self._on_delete_tunnel(device)))
+            box.append(delete_btn)
+
+        add_child_btn = Gtk.ModelButton(label="Add child tunnel…")
+        add_child_btn.connect("clicked", lambda *_: (
+            popover.popdown(), self._on_add_tunnel(parent_id=device.id)))
+        box.append(add_child_btn)
+
+        popover.set_child(box)
+        popover.set_pointing_to(Gdk.Rectangle(int(x), int(y), 1, 1))
+        self._context_popover = popover
+        popover.popup()
+
+    def _on_edit_tunnel(self, device):
+        dialog = self._tunnel_dialog(tunnel=device)
+        if dialog is not None:
+            dialog.present()
+
+    def _on_delete_tunnel(self, device):
+        children = [d for d in (self._topo_view._diagram._topo.devices if (
+            self._topo_view._diagram._topo) else [])
+            if d.parent_id == device.id]
+        note = " Its children will be re-parented to its parent." if children else ""
+        dialog = Adw.MessageDialog.new(
+            self, "Delete tunnel",
+            f"Delete '{device.label}'?{note}")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete",
+                                       Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("delete")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response):
+            if response != "delete":
+                return
+            existing = load_manual_tunnels()
+            updated = delete_manual_tunnel(existing, device.id)
+            save_manual_tunnels(updated)
             self._refresh_topology()
-            self._toast.add_toast(Adw.Toast.new(f"Tunnel '{label}' added"))
+            self._toast.add_toast(
+                Adw.Toast.new(f"Tunnel '{device.label}' deleted"))
 
         dialog.connect("response", on_response)
         dialog.present()
